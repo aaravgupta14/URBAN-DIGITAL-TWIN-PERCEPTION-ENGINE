@@ -41,7 +41,6 @@ def segment_road(frame):
     }
 
     with torch.no_grad():
-
         outputs = model(**inputs)
 
     logits = torch.nn.functional.interpolate(
@@ -80,6 +79,7 @@ def segment_road(frame):
     clean_mask = np.zeros_like(road_mask)
 
     hull = None
+    largest = None
 
     if contours:
 
@@ -98,4 +98,4 @@ def segment_road(frame):
             thickness=cv2.FILLED
         )
 
-    return clean_mask, hull
+    return clean_mask, hull, largest
