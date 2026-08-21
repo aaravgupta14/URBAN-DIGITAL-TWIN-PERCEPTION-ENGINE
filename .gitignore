@@ -1,0 +1,13 @@
+# Raw input footage - large, not source, regenerate/re-download as needed
+dataset/
+
+# Generated recordings from running digital_twin_live.py
+output_tracking_source.*
+output_digital_twin.*
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Analysis/debug frames captured during development
+testing images/
