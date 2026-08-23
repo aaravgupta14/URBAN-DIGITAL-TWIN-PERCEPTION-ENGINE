@@ -173,7 +173,7 @@ while True:
         results = model.track(
             frame,
             persist=True,
-            tracker="tracktrack_reid.yaml",
+            tracker="tracktrack_reid_loose.yaml",
             classes=[2, 3, 5, 7],
             imgsz=1280,
             conf=0.1,  # let ByteTrack's own low-confidence recovery stage see weak/occluded detections
