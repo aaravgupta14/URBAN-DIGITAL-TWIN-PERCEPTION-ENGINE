@@ -22,16 +22,16 @@ if device == "cuda":
 VIDEO_PATH = r"C:\Users\Aarav Gupta\OneDrive\Desktop\DIGITAL_TWIN\dataset\Weast (1).mp4"
 HOMOGRAPHY_PATH = "homography.npy"
 
-OUTPUT_WIDTH = 2526
-OUTPUT_HEIGHT = 996
-UNITS_PER_METER = None
-PROXIMITY_THRESHOLD = 200
-ARROW_LENGTH = 40            
-MIN_MOVEMENT_FOR_ARROW = 2  
+OUTPUT_WIDTH = 840
+OUTPUT_HEIGHT = 306
+UNITS_PER_METER = 120  # matches PIXELS_PER_METER in homo_IPM.py
+PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)   # 2.5m following/gap distance
+ARROW_LENGTH = 20
+MIN_MOVEMENT_FOR_ARROW = 2
 MIN_TRACK_AGE = 2
-STEP_HISTORY_LEN = 8        
-JUMP_ANOMALY_MULT = 6        
-JUMP_ANOMALY_MIN_ABS = 40
+STEP_HISTORY_LEN = 8
+JUMP_ANOMALY_MULT = 6
+JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)  # ~12.5cm floor before a jump counts as anomalous
 SMOOTHING_ALPHA = 0.4        # lower = smoother/more lag, higher = more responsive/noisier
 
 FRAME_QUEUE_MAX = 4
@@ -173,7 +173,7 @@ while True:
         results = model.track(
             frame,
             persist=True,
-            tracker="bytetrack.yaml",
+            tracker="tracktrack_reid.yaml",
             classes=[2, 3, 5, 7],
             imgsz=1280,
             conf=0.1,  # let ByteTrack's own low-confidence recovery stage see weak/occluded detections
