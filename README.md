@@ -22,6 +22,20 @@ Instead of requiring operators to continuously monitor multiple CCTV feeds, the 
 
 ---
 
+## 🎥 Demo
+
+Running `digital_twin_log.py` produces three synchronized outputs from a single pass over the source footage:
+
+| Output | Video | What it shows |
+| --- | --- | --- |
+| **Source Tracking** | [▶ watch](demo_source_tracking.mp4) | The original footage with YOLO detection boxes, track IDs, and the estimated ground-contact point for each vehicle |
+| **Digital Twin (2D)** | [▶ watch](demo_twin_2d.mp4) | The bird's-eye twin — each vehicle as a point on the road plane, with heading arrows and proximity lines between nearby vehicles |
+| **Digital Twin (3D)** | [▶ watch](demo_twin_3d.mp4) | The same twin rendered as a rotatable 3D scene, with every vehicle on a single ground plane |
+
+All three are written in lockstep with the per-detection log (`tracking_log.csv`), so any frame in the videos can be traced back to the underlying coordinates.
+
+---
+
 # 🧠 Core Idea
 
 The project converts flat 2D traffic footage into a live mathematical representation of road traffic.

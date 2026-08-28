@@ -28,6 +28,12 @@ HOMOGRAPHY_PATH = "homography.npy"
 
 OUTPUT_WIDTH = 840
 OUTPUT_HEIGHT = 306
+PAD_LEFT = 16
+PAD_RIGHT = 96
+PAD_TOP = 80
+PAD_BOTTOM = 16
+CANVAS_WIDTH = OUTPUT_WIDTH + PAD_LEFT + PAD_RIGHT
+CANVAS_HEIGHT = OUTPUT_HEIGHT + PAD_TOP + PAD_BOTTOM
 UNITS_PER_METER = 120
 PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)
 ARROW_LENGTH = 20
@@ -94,7 +100,7 @@ if RECORD:
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fourcc = cv2.VideoWriter_fourcc(*"XVID")
     source_writer = cv2.VideoWriter(SOURCE_OUTPUT_PATH, fourcc, RECORD_FPS, (src_w, src_h))
-    twin_writer = cv2.VideoWriter(TWIN_OUTPUT_PATH, fourcc, RECORD_FPS, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+    twin_writer = cv2.VideoWriter(TWIN_OUTPUT_PATH, fourcc, RECORD_FPS, (CANVAS_WIDTH, CANVAS_HEIGHT))
     print(f"Recording to {SOURCE_OUTPUT_PATH} and {TWIN_OUTPUT_PATH}")
 
 frame_queue: "Queue" = Queue(maxsize=FRAME_QUEUE_MAX)
@@ -175,8 +181,8 @@ ax3d = fig3d.add_subplot(111, projection="3d")
 ax3d.set_xlabel("X (across road)")
 ax3d.set_ylabel("Y (0 = far)")
 ax3d.set_zlabel("Z (road plane)")
-ax3d.set_xlim(0, OUTPUT_WIDTH)
-ax3d.set_ylim(0, OUTPUT_HEIGHT)
+ax3d.set_xlim(0, CANVAS_WIDTH)
+ax3d.set_ylim(0, CANVAS_HEIGHT)
 ax3d.set_zlim(-Z_LIM, Z_LIM)
 ax3d.set_zticks([Z_PLANE])
 title3d = ax3d.set_title("Live 3D Digital Twin")
@@ -216,7 +222,7 @@ while True:
 
     boxes = results[0].boxes
     annotated_frame = frame.copy()
-    canvas = np.full((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), (40, 40, 40), dtype=np.uint8)
+    canvas = np.full((CANVAS_HEIGHT, CANVAS_WIDTH, 3), (40, 40, 40), dtype=np.uint8)
 
     vehicles = []
     total_tracked = 0
@@ -241,7 +247,8 @@ while True:
         pts = np.stack([cx_arr, cy_arr], axis=1).astype(np.float32).reshape(-1, 1, 2)
         world_pts = cv2.perspectiveTransform(pts, H).reshape(-1, 2)
 
-        track_streak = {int(tid): track_streak.get(int(tid), 0) + 1 for tid in ids}
+        for tid in ids:
+            track_streak[int(tid)] = track_streak.get(int(tid), 0) + 1
 
         for idx, track_id in enumerate(ids):
             track_id = int(track_id)
@@ -258,7 +265,10 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
             )
 
-            in_bounds = 0 <= X < OUTPUT_WIDTH and 0 <= Y < OUTPUT_HEIGHT
+            in_bounds = (
+                -PAD_LEFT <= X < OUTPUT_WIDTH + PAD_RIGHT
+                and -PAD_TOP <= Y < OUTPUT_HEIGHT + PAD_BOTTOM
+            )
             stable = track_streak[track_id] >= MIN_TRACK_AGE
 
             log_rows.append({
@@ -281,9 +291,13 @@ while True:
                 smoothed_positions[track_id] = (sX, sY)
                 cls_name = CLASS_NAMES.get(int(cls_arr[idx]), "vehicle")
                 track_class[track_id] = cls_name
-                vehicles.append({"id": track_id, "X": sX, "Y": sY, "Z": Z_PLANE, "low_conf": low_conf})
-    else:
-        track_streak = {}
+                vehicles.append({
+                    "id": track_id,
+                    "X": sX + PAD_LEFT,
+                    "Y": sY + PAD_TOP,
+                    "Z": Z_PLANE,
+                    "low_conf": low_conf,
+                })
 
     for v in vehicles:
 
