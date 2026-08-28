@@ -25,7 +25,6 @@ kernel = cv2.getStructuringElement(
     (9, 9)
 )
 
-
 def segment_road(frame):
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

@@ -1,7 +1,7 @@
 tracker_type: tracktrack
-track_high_thresh: 0.25    # was 0.6 -- matches ByteTrack's gate for starting a track
-track_low_thresh: 0.1      # matches the conf=0.1 fix: let weak detections help maintain tracks
-new_track_thresh: 0.25     # was 0.7 -- was rejecting real vehicles below this confidence
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
 track_buffer: 30
 match_thresh: 0.7
 lost_match_thr: 0.9

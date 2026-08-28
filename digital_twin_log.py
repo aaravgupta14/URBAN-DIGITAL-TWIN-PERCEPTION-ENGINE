@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue, Empty, Full
@@ -27,34 +28,37 @@ HOMOGRAPHY_PATH = "homography.npy"
 
 OUTPUT_WIDTH = 840
 OUTPUT_HEIGHT = 306
-UNITS_PER_METER = 120  # matches PIXELS_PER_METER in homo_IPM.py
-PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)   # 2.5m following/gap distance
+UNITS_PER_METER = 120
+PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)
 ARROW_LENGTH = 20
 MIN_MOVEMENT_FOR_ARROW = 2
 MIN_TRACK_AGE = 2
 STEP_HISTORY_LEN = 8
 JUMP_ANOMALY_MULT = 6
-JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)  # ~12.5cm floor before a jump counts as anomalous
-SMOOTHING_ALPHA = 0.4        # lower = smoother/more lag, higher = more responsive/noisier
+JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)
+SMOOTHING_ALPHA = 0.4
 
 FRAME_QUEUE_MAX = 4
 
 RECORD = True
-SOURCE_OUTPUT_PATH = "output_tracking_source.mp4"
-TWIN_OUTPUT_PATH = "output_digital_twin.mp4"
+SOURCE_OUTPUT_PATH = "output_tracking_source.avi"
+TWIN_OUTPUT_PATH = "output_digital_twin.avi"
 RECORD_FPS = 30.0
 
 LOG_PATH = "tracking_log.csv"
-VIDEO_LABEL = "weast"  # change per source video so multiple logs can be told apart after merging
+VIDEO_LABEL = "weast"
 
 CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 CLASS_COLORS = {"car": "tab:blue", "motorcycle": "tab:orange", "bus": "tab:green", "truck": "tab:red"}
 
-# Nominal real-world vehicle heights (metres) -> Z coordinate. The homography
-# only recovers ground-plane X,Y, so height can't be measured from it; these
-# are per-class stand-ins so the twin renders as a 3D scene rather than a plane.
-CLASS_HEIGHTS_M = {"car": 1.5, "motorcycle": 1.2, "bus": 3.2, "truck": 3.5}
-Z_MAX = int(4.0 * UNITS_PER_METER)
+Z_PLANE = 0.0
+Z_LIM = 1.0
+
+CLASS_RGBA = {name: to_rgba(c) for name, c in CLASS_COLORS.items()}
+DEFAULT_RGBA = to_rgba("gray")
+
+UPDATE_EVERY = 2
+GRAPH_OUTPUT_PATH = "output_digital_twin_3d.avi"
 
 H = np.load(HOMOGRAPHY_PATH)
 H_inv = np.linalg.inv(H)
@@ -88,14 +92,13 @@ twin_writer = None
 if RECORD:
     src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
     source_writer = cv2.VideoWriter(SOURCE_OUTPUT_PATH, fourcc, RECORD_FPS, (src_w, src_h))
     twin_writer = cv2.VideoWriter(TWIN_OUTPUT_PATH, fourcc, RECORD_FPS, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
     print(f"Recording to {SOURCE_OUTPUT_PATH} and {TWIN_OUTPUT_PATH}")
 
 frame_queue: "Queue" = Queue(maxsize=FRAME_QUEUE_MAX)
 stop_event = Event()
-
 
 def video_reader():
     while not stop_event.is_set():
@@ -109,7 +112,6 @@ def video_reader():
             except Full:
                 continue
     frame_queue.put(None)
-
 
 def compute_close_pairs(X, Y, threshold):
     n = len(X)
@@ -125,23 +127,16 @@ def compute_close_pairs(X, Y, threshold):
     mask = dists < threshold
     return list(zip(i_idx[mask].tolist(), j_idx[mask].tolist(), dists[mask].tolist()))
 
-
 def format_distance(d):
     if UNITS_PER_METER:
         return f"{d / UNITS_PER_METER:.1f} m"
     return f"{int(d)} u"
 
-
 def refine_ground_point(frame, x1, y1, x2, y2):
-    """Approximate where the vehicle's tires actually meet the road, instead
-    of trusting the raw bbox bottom edge (which drifts with viewing angle,
-    roof overhang, and shadow -- see ground-point estimation research: a
-    vehicle's dark body/shadow ending and the lighter road beginning is a
-    usable contrast cue for the true ground-contact row)."""
     h = y2 - y1
     if h < 10:
         return (x1 + x2) // 2, y2
-    band_top = int(y1 + h * 0.6)  # bottom 40% of the box, where wheels/shadow are
+    band_top = int(y1 + h * 0.6)
     band_bottom = min(y2 + int(h * 0.15), frame.shape[0] - 1)
     x1c, x2c = max(x1, 0), min(x2, frame.shape[1])
     crop = frame[band_top:band_bottom, x1c:x2c]
@@ -150,7 +145,7 @@ def refine_ground_point(frame, x1, y1, x2, y2):
 
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     w = gray.shape[1]
-    lo, hi = int(w * 0.3), int(w * 0.7)  # middle third, avoids neighboring clutter
+    lo, hi = int(w * 0.3), int(w * 0.7)
     if hi <= lo:
         return (x1 + x2) // 2, y2
     strip = gray[:, lo:hi]
@@ -160,7 +155,6 @@ def refine_ground_point(frame, x1, y1, x2, y2):
     refined_y = band_top + ground_row
     return (x1 + x2) // 2, refined_y
 
-
 executor = ThreadPoolExecutor(max_workers=1)
 reader_future = executor.submit(video_reader)
 
@@ -169,14 +163,27 @@ last_frame = None
 prev_positions = {}
 track_streak = {}
 step_history = {}
-smoothed_positions = {}  # track_id -> exponentially-smoothed (X, Y)
-track_class = {}    # track_id -> class name, for coloring the live 3D view
+smoothed_positions = {}
+track_class = {}
 log_rows = []
 frame_idx = 0
 
 plt.ion()
 fig3d = plt.figure(figsize=(6, 5))
 ax3d = fig3d.add_subplot(111, projection="3d")
+
+ax3d.set_xlabel("X (across road)")
+ax3d.set_ylabel("Y (0 = far)")
+ax3d.set_zlabel("Z (road plane)")
+ax3d.set_xlim(0, OUTPUT_WIDTH)
+ax3d.set_ylim(0, OUTPUT_HEIGHT)
+ax3d.set_zlim(-Z_LIM, Z_LIM)
+ax3d.set_zticks([Z_PLANE])
+title3d = ax3d.set_title("Live 3D Digital Twin")
+
+scat3d = ax3d.scatter([0.0], [0.0], [Z_PLANE], s=25, depthshade=False)
+
+graph_writer = None
 while True:
     if not paused:
         try:
@@ -187,10 +194,12 @@ while True:
             break
         last_frame = frame
         frame_idx += 1
+        new_frame = True
     else:
         frame = last_frame
         if frame is None:
             continue
+        new_frame = False
 
     with torch.no_grad():
         results = model.track(
@@ -199,7 +208,7 @@ while True:
             tracker="tracktrack_reid_loose.yaml",
             classes=[2, 3, 5, 7],
             imgsz=1280,
-            conf=0.1,  # let ByteTrack's own low-confidence recovery stage see weak/occluded detections
+            conf=0.1,
             device=0,
             half=False,
             verbose=False,
@@ -266,22 +275,19 @@ while True:
             })
 
             if in_bounds and stable:
-                # Smooth the noisy per-frame ground-point estimate so plotted
-                # paths trace the vehicle's real trajectory instead of jitter.
                 prev_smooth = smoothed_positions.get(track_id, (X, Y))
                 sX = SMOOTHING_ALPHA * X + (1 - SMOOTHING_ALPHA) * prev_smooth[0]
                 sY = SMOOTHING_ALPHA * Y + (1 - SMOOTHING_ALPHA) * prev_smooth[1]
                 smoothed_positions[track_id] = (sX, sY)
                 cls_name = CLASS_NAMES.get(int(cls_arr[idx]), "vehicle")
                 track_class[track_id] = cls_name
-                sZ = CLASS_HEIGHTS_M.get(cls_name, 1.5) * UNITS_PER_METER
-                vehicles.append({"id": track_id, "X": sX, "Y": sY, "Z": sZ, "low_conf": low_conf})
+                vehicles.append({"id": track_id, "X": sX, "Y": sY, "Z": Z_PLANE, "low_conf": low_conf})
     else:
-        track_streak = {}  # no detections at all this frame -> every ID's streak breaks
+        track_streak = {}
 
     for v in vehicles:
 
-        color = (0, 165, 255) if v["low_conf"] else (0, 255, 0)  # orange = low-confidence (far-field)
+        color = (0, 165, 255) if v["low_conf"] else (0, 255, 0)
         cv2.circle(canvas, (int(v["X"]), int(v["Y"])), 7, color, -1)
         cv2.putText(
             canvas, f"ID:{v['id']}", (int(v["X"]) + 10, int(v["Y"]) - 10),
@@ -336,22 +342,33 @@ while True:
     cv2.imshow("Tracking (source)", annotated_frame)
     cv2.imshow("Digital Twin", canvas)
 
-    ax3d.clear()
-    for v in vehicles:
-        tid = v["id"]
-        color = CLASS_COLORS.get(track_class.get(tid, ""), "gray")
-        ax3d.scatter([v["X"]], [v["Y"]], [v["Z"]], color=color, s=25)
-        ax3d.plot([v["X"], v["X"]], [v["Y"], v["Y"]], [0, v["Z"]], color=color, linewidth=1, alpha=0.5)
-        ax3d.text(v["X"], v["Y"], v["Z"], f"{tid}", fontsize=7, color="black")
-    ax3d.set_xlabel("X")
-    ax3d.set_ylabel("Y")
-    ax3d.set_zlabel("Z (height)")
-    ax3d.set_xlim(0, OUTPUT_WIDTH)
-    ax3d.set_ylim(0, OUTPUT_HEIGHT)
-    ax3d.set_zlim(0, Z_MAX)
-    ax3d.set_title(f"Live 3D Digital Twin (frame {frame_idx})")
-    fig3d.canvas.draw()
-    fig3d.canvas.flush_events()
+    if new_frame and frame_idx % UPDATE_EVERY == 0:
+        xs = [v["X"] for v in vehicles]
+        ys = [v["Y"] for v in vehicles]
+        zs = [Z_PLANE] * len(vehicles)
+        scat3d._offsets3d = (xs, ys, zs)
+        scat3d.set_facecolor(
+            [CLASS_RGBA.get(track_class.get(v["id"], ""), DEFAULT_RGBA) for v in vehicles]
+        )
+        title3d.set_text(f"Live 3D Digital Twin (frame {frame_idx})")
+
+        fig3d.canvas.draw()
+        fig3d.canvas.flush_events()
+
+        graph_rgba = np.asarray(fig3d.canvas.buffer_rgba())
+        graph_bgr = cv2.cvtColor(graph_rgba, cv2.COLOR_RGBA2BGR)
+        if graph_writer is None:
+            gh, gw = graph_bgr.shape[:2]
+            graph_writer = cv2.VideoWriter(
+                GRAPH_OUTPUT_PATH,
+                cv2.VideoWriter_fourcc(*"XVID"),
+                RECORD_FPS / UPDATE_EVERY,
+                (gw, gh),
+            )
+            print(f"Recording 3D view to {GRAPH_OUTPUT_PATH} ({gw}x{gh})")
+        graph_writer.write(graph_bgr)
+    else:
+        fig3d.canvas.flush_events()
 
     key = cv2.waitKey(1) & 0xFF
     if key in (ord("q"), 27):
@@ -378,6 +395,9 @@ if RECORD:
     source_writer.release()
     twin_writer.release()
     print(f"Saved {SOURCE_OUTPUT_PATH} and {TWIN_OUTPUT_PATH}")
+if graph_writer is not None:
+    graph_writer.release()
+    print(f"Saved {GRAPH_OUTPUT_PATH}")
 
 pd.DataFrame(log_rows).to_csv(LOG_PATH, index=False)
 print(f"Logged {len(log_rows)} rows to {LOG_PATH}")

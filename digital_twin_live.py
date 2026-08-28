@@ -24,15 +24,15 @@ HOMOGRAPHY_PATH = "homography.npy"
 
 OUTPUT_WIDTH = 840
 OUTPUT_HEIGHT = 306
-UNITS_PER_METER = 120  # matches PIXELS_PER_METER in homo_IPM.py
-PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)   # 2.5m following/gap distance
+UNITS_PER_METER = 120
+PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)
 ARROW_LENGTH = 20
 MIN_MOVEMENT_FOR_ARROW = 2
 MIN_TRACK_AGE = 2
 STEP_HISTORY_LEN = 8
 JUMP_ANOMALY_MULT = 6
-JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)  # ~12.5cm floor before a jump counts as anomalous
-SMOOTHING_ALPHA = 0.4        # lower = smoother/more lag, higher = more responsive/noisier
+JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)
+SMOOTHING_ALPHA = 0.4
 
 FRAME_QUEUE_MAX = 4
 
@@ -81,7 +81,6 @@ if RECORD:
 frame_queue: "Queue" = Queue(maxsize=FRAME_QUEUE_MAX)
 stop_event = Event()
 
-
 def video_reader():
     while not stop_event.is_set():
         ret, frame = cap.read()
@@ -94,7 +93,6 @@ def video_reader():
             except Full:
                 continue
     frame_queue.put(None)
-
 
 def compute_close_pairs(X, Y, threshold):
     n = len(X)
@@ -110,23 +108,16 @@ def compute_close_pairs(X, Y, threshold):
     mask = dists < threshold
     return list(zip(i_idx[mask].tolist(), j_idx[mask].tolist(), dists[mask].tolist()))
 
-
 def format_distance(d):
     if UNITS_PER_METER:
         return f"{d / UNITS_PER_METER:.1f} m"
     return f"{int(d)} u"
 
-
 def refine_ground_point(frame, x1, y1, x2, y2):
-    """Approximate where the vehicle's tires actually meet the road, instead
-    of trusting the raw bbox bottom edge (which drifts with viewing angle,
-    roof overhang, and shadow -- see ground-point estimation research: a
-    vehicle's dark body/shadow ending and the lighter road beginning is a
-    usable contrast cue for the true ground-contact row)."""
     h = y2 - y1
     if h < 10:
         return (x1 + x2) // 2, y2
-    band_top = int(y1 + h * 0.6)  # bottom 40% of the box, where wheels/shadow are
+    band_top = int(y1 + h * 0.6)
     band_bottom = min(y2 + int(h * 0.15), frame.shape[0] - 1)
     x1c, x2c = max(x1, 0), min(x2, frame.shape[1])
     crop = frame[band_top:band_bottom, x1c:x2c]
@@ -135,7 +126,7 @@ def refine_ground_point(frame, x1, y1, x2, y2):
 
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     w = gray.shape[1]
-    lo, hi = int(w * 0.3), int(w * 0.7)  # middle third, avoids neighboring clutter
+    lo, hi = int(w * 0.3), int(w * 0.7)
     if hi <= lo:
         return (x1 + x2) // 2, y2
     strip = gray[:, lo:hi]
@@ -145,7 +136,6 @@ def refine_ground_point(frame, x1, y1, x2, y2):
     refined_y = band_top + ground_row
     return (x1 + x2) // 2, refined_y
 
-
 executor = ThreadPoolExecutor(max_workers=1)
 reader_future = executor.submit(video_reader)
 
@@ -154,7 +144,7 @@ last_frame = None
 prev_positions = {}
 track_streak = {}
 step_history = {}
-smoothed_positions = {}  # track_id -> exponentially-smoothed (X, Y)
+smoothed_positions = {}
 while True:
     if not paused:
         try:
@@ -176,7 +166,7 @@ while True:
             tracker="tracktrack_reid_loose.yaml",
             classes=[2, 3, 5, 7],
             imgsz=1280,
-            conf=0.1,  # let ByteTrack's own low-confidence recovery stage see weak/occluded detections
+            conf=0.1,
             device=0,
             half=False,
             verbose=False,
@@ -227,19 +217,17 @@ while True:
             in_bounds = 0 <= X < OUTPUT_WIDTH and 0 <= Y < OUTPUT_HEIGHT
             stable = track_streak[track_id] >= MIN_TRACK_AGE
             if in_bounds and stable:
-                # Smooth the noisy per-frame ground-point estimate so plotted
-                # paths trace the vehicle's real trajectory instead of jitter.
                 prev_smooth = smoothed_positions.get(track_id, (X, Y))
                 sX = SMOOTHING_ALPHA * X + (1 - SMOOTHING_ALPHA) * prev_smooth[0]
                 sY = SMOOTHING_ALPHA * Y + (1 - SMOOTHING_ALPHA) * prev_smooth[1]
                 smoothed_positions[track_id] = (sX, sY)
                 vehicles.append({"id": track_id, "X": sX, "Y": sY, "low_conf": low_conf})
     else:
-        track_streak = {}  # no detections at all this frame -> every ID's streak breaks
+        track_streak = {}
 
     for v in vehicles:
 
-        color = (0, 165, 255) if v["low_conf"] else (0, 255, 0)  # orange = low-confidence (far-field)
+        color = (0, 165, 255) if v["low_conf"] else (0, 255, 0)
         cv2.circle(canvas, (int(v["X"]), int(v["Y"])), 7, color, -1)
         cv2.putText(
             canvas, f"ID:{v['id']}", (int(v["X"]) + 10, int(v["Y"]) - 10),

@@ -5,20 +5,13 @@ from road_seg import segment_road
 
 IMAGE_PATH = r"C:\Users\Aarav Gupta\OneDrive\Desktop\DIGITAL_TWIN\calibration_frame.jpg"
 
-# How far down the frame (as a fraction of height) the top pair should sit.
-# Kept away from the horizon/vanishing-point zone, where a few pixels of
-# detection noise translate into a large error after the perspective warp.
 TOP_ROW_TARGET_FRAC = 0.42
-TOP_ROW_SEARCH_RANGE = 60   # rows to search above/below the target if it's blocked
-MIN_ROAD_WIDTH_PX = 80      # minimum clean mask width to accept a row
-CORNER_INSET_PX = 8         # pull points in slightly from the raw mask edge
+TOP_ROW_SEARCH_RANGE = 60
+MIN_ROAD_WIDTH_PX = 80
+CORNER_INSET_PX = 8
 
-# Standard-assumption road width, used to anchor real-world scale. Not a
-# measured value -- correct this if you ever get an actual measurement of
-# this road/lane. Chosen as a round mid-range figure for an urban arterial
-# carriageway + shoulder (~3.5m/lane plus a parking/shoulder strip).
 STANDARD_ROAD_WIDTH_M = 7.0
-PIXELS_PER_METER = 120  # canvas resolution; tune for detail vs. size
+PIXELS_PER_METER = 120
 
 image = cv2.imread(IMAGE_PATH)
 
@@ -30,7 +23,6 @@ img_h, img_w = image.shape[:2]
 
 road_mask, hull, contour = segment_road(image)
 
-
 def row_bounds(mask, y):
     row = mask[y, :]
     xs = np.where(row > 0)[0]
@@ -38,9 +30,7 @@ def row_bounds(mask, y):
         return None
     return int(xs.min()), int(xs.max())
 
-
 def find_good_row(mask, target_y, search_range, min_width):
-    """Search outward from target_y for a row with a clean, wide road span."""
     for dy in range(search_range + 1):
         for y in {target_y - dy, target_y + dy}:
             if 0 <= y < mask.shape[0]:
@@ -49,14 +39,7 @@ def find_good_row(mask, target_y, search_range, min_width):
                     return y, bounds
     return None, None
 
-
 def fit_edge_line(mask, y_start, y_end, side):
-    """Robust line fit x = m*y + c to one road edge across many rows, so a
-    single noisy/obstructed row (a parked vehicle bulging the mask locally)
-    can't throw off a corner the way sampling just one row can. This is what
-    actually keeps the two road edges honestly parallel/straight in the
-    warped output, since the corners get placed ON the fitted true edge
-    line rather than on a possibly-noisy single-row mask boundary."""
     ys, xs = [], []
     for y in range(y_start, y_end + 1):
         b = row_bounds(mask, y)
@@ -77,9 +60,6 @@ def fit_edge_line(mask, y_start, y_end, side):
             m, c = np.polyfit(ys_arr[keep], xs_arr[keep], 1)
     return m, c
 
-
-# Bottom row: scan up from the very bottom of the frame for the first
-# row with a wide, clean stretch of road (as low/near as possible).
 bottom_y, bottom_bounds = None, None
 for y in range(img_h - 1, int(img_h * 0.6), -1):
     bounds = row_bounds(road_mask, y)
@@ -87,7 +67,6 @@ for y in range(img_h - 1, int(img_h * 0.6), -1):
         bottom_y, bottom_bounds = y, bounds
         break
 
-# Top row: target row out of the noisy near-horizon zone.
 top_y, top_bounds = find_good_row(
     road_mask, int(img_h * TOP_ROW_TARGET_FRAC), TOP_ROW_SEARCH_RANGE, MIN_ROAD_WIDTH_PX
 )
@@ -96,10 +75,6 @@ if bottom_y is None or top_y is None:
     print("Could not find a usable road span in the calibration image.")
     exit()
 
-# Fit the true left/right road-edge lines across the whole span between the
-# two rows, then place all 4 corners ON those fitted lines -- not on raw
-# per-row mask edges -- so the quad's sides track the road's real edges
-# instead of picking up local segmentation noise at just two sample rows.
 left_line = fit_edge_line(road_mask, top_y, bottom_y, "left")
 right_line = fit_edge_line(road_mask, top_y, bottom_y, "right")
 
@@ -114,10 +89,10 @@ else:
     tr_x, br_x = rm * top_y + rc, rm * bottom_y + rc
 
 points = [
-    (int(tl_x + CORNER_INSET_PX), top_y),      # 1: top-left
-    (int(tr_x - CORNER_INSET_PX), top_y),      # 2: top-right
-    (int(br_x - CORNER_INSET_PX), bottom_y),   # 3: bottom-right
-    (int(bl_x + CORNER_INSET_PX), bottom_y),   # 4: bottom-left
+    (int(tl_x + CORNER_INSET_PX), top_y),
+    (int(tr_x - CORNER_INSET_PX), top_y),
+    (int(br_x - CORNER_INSET_PX), bottom_y),
+    (int(bl_x + CORNER_INSET_PX), bottom_y),
 ]
 
 print("Auto-selected calibration points (fitted road-edge lines):")
@@ -136,15 +111,6 @@ cv2.imshow("Calibration (auto)", display)
 
 src = np.float32(points)
 
-# Anchor scale to the standard road-width assumption, and -- importantly --
-# use the SAME pixels-per-meter for both axes. Only the width axis has an
-# actual real-world reference (the assumed road width); the depth axis has
-# no independent measurement, so instead of inventing a false "verified"
-# number for it, its height is estimated by preserving the aspect ratio the
-# raw pixel geometry already implied, just rescaled onto the same, single,
-# consistent pixels-per-meter as the width. Using two different, unrelated
-# scales for X and Y (the old behavior) rotates/skews any diagonal
-# real-world direction on the canvas -- this keeps both axes isotropic.
 OUTPUT_WIDTH = int(PIXELS_PER_METER * STANDARD_ROAD_WIDTH_M)
 
 width_top = np.linalg.norm(src[1] - src[0])
