@@ -1,11 +1,11 @@
 # URBAN-DIGITAL-TWIN-PERCEPTION-ENGINE
-# 🚦 TalkToMyTwin
+# TalkToMyTwin
 
 ### Conversational Traffic Digital Twin for Intelligent Road Monitoring and Safety
 
 ---
 
-## 📌 Overview
+## Overview
 
 **TalkToMyTwin** is an intelligent traffic monitoring platform that transforms ordinary roadside camera feeds into a real-time **Traffic Digital Twin**.
 
@@ -22,21 +22,21 @@ Instead of requiring operators to continuously monitor multiple CCTV feeds, the 
 
 ---
 
-## 🎥 Demo
+## Demo
 
 Running `digital_twin_log.py` produces three synchronized outputs from a single pass over the source footage:
 
 | Output | Video | What it shows |
 | --- | --- | --- |
-| **Source Tracking** | [▶ watch](demo_source_tracking.mp4) | The original footage with YOLO detection boxes, track IDs, and the estimated ground-contact point for each vehicle |
-| **Digital Twin (2D)** | [▶ watch](demo_twin_2d.mp4) | The bird's-eye twin — each vehicle as a point on the road plane, with heading arrows and proximity lines between nearby vehicles |
-| **Digital Twin (3D)** | [▶ watch](demo_twin_3d.mp4) | The same twin rendered as a rotatable 3D scene, with every vehicle on a single ground plane |
+| **Source Tracking** | [Watch](demo_source_tracking.mp4) | The original footage with YOLO detection boxes, track IDs, and the estimated ground-contact point for each vehicle |
+| **Digital Twin (2D)** | [Watch](demo_twin_2d.mp4) | The bird's-eye twin — each vehicle as a point on the road plane, with heading arrows and proximity lines between nearby vehicles |
+| **Digital Twin (3D)** | [Watch](demo_twin_3d.mp4) | The same twin rendered as a rotatable 3D scene, with every vehicle on a single ground plane |
 
 All three are written in lockstep with the per-detection log (`tracking_log.csv`), so any frame in the videos can be traced back to the underlying coordinates.
 
 ---
 
-# 🧠 Core Idea
+# Core Idea
 
 The project converts flat 2D traffic footage into a live mathematical representation of road traffic.
 
@@ -53,7 +53,7 @@ This creates a continuously updating **Digital Twin** of the traffic environment
 
 ---
 
-# 🏗 System Architecture
+# System Architecture
 
 ```text
 Road Camera Feed
@@ -78,9 +78,9 @@ Conversational AI Interface
 
 ---
 
-# ⚙ Features
+# Features
 
-## 🚗 Traffic Digital Twin
+## Traffic Digital Twin
 
 * Real-time vehicle monitoring
 * Vehicle trajectory tracking
@@ -90,7 +90,7 @@ Conversational AI Interface
 
 ---
 
-## ⚠ Automated Alert System
+## Automated Alert System
 
 The system autonomously generates alerts for:
 
@@ -105,7 +105,7 @@ Alerts are generated using deterministic mathematical reasoning to ensure low la
 
 ---
 
-## 🔮 Proactive Traffic Intelligence
+## Proactive Traffic Intelligence
 
 The platform does not only identify current traffic situations but also predicts future risks such as:
 
@@ -118,7 +118,7 @@ This allows the system to act proactively instead of reactively.
 
 ---
 
-## 📊 Traffic Analytics
+## Traffic Analytics
 
 * Vehicle Count Analysis
 * Traffic Density Estimation
@@ -130,7 +130,7 @@ This allows the system to act proactively instead of reactively.
 
 ---
 
-## 💬 Conversational AI Interface (Phase 3 - Optional)
+## Conversational AI Interface (Phase 3 - Optional)
 
 The conversational AI component acts purely as an interaction and explanation layer.
 
@@ -146,7 +146,7 @@ The LLM **does not participate in safety decisions or alert generation**.
 
 ---
 
-# 🛠 Tech Stack
+# Tech Stack
 
 ### Computer Vision
 
@@ -188,7 +188,7 @@ The LLM **does not participate in safety decisions or alert generation**.
 
 ---
 
-# 🎯 Applications
+# Applications
 
 * Smart Cities
 * Intelligent Transportation Systems (ITS)
@@ -200,7 +200,7 @@ The LLM **does not participate in safety decisions or alert generation**.
 
 ---
 
-# 🚀 Future Scope
+# Future Scope
 
 * Multi-Camera Traffic Digital Twins
 * Historical Traffic Replay
@@ -212,26 +212,26 @@ The LLM **does not participate in safety decisions or alert generation**.
 
 ---
 
-# ⭐ Novel Contribution
+# Novel Contribution
 
 TalkToMyTwin combines:
 
-✅ Computer Vision
+Computer Vision
 
-✅ Digital Twin Technology
+Digital Twin Technology
 
-✅ Spatial Traffic Intelligence
+Spatial Traffic Intelligence
 
-✅ Proactive Traffic Prediction
+Proactive Traffic Prediction
 
-✅ Automated Safety Alerts
+Automated Safety Alerts
 
-✅ Conversational AI Interfaces
+Conversational AI Interfaces
 
 to create an intelligent traffic monitoring platform capable of understanding, predicting, and explaining real-world traffic situations in real time.
 
 ---
 
-# 📖 Citation
+# Citation
 
-If you find this project useful, please consider giving it a ⭐ on GitHub.
+If you find this project useful, please consider starring it on GitHub.
