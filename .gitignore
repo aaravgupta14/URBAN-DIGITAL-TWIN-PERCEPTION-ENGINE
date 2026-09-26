@@ -4,10 +4,13 @@ testing images/
 output_*.avi
 output_*.mp4
 predictions_mot.txt
-report/*.zip
 
 __pycache__/
 *.pyc
 
 *.pt
 .vscode/
+
+configs/
+report/
+RESEARCH_NOTES.md

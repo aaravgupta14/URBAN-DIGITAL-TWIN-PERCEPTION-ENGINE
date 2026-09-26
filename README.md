@@ -80,7 +80,7 @@ Measured on the 12.6 s `weast` clip (378 frames, 2,494 logged detections):
 | Near-field TTC warnings | 2 |
 | Far-field TTC warnings | 1,381 |
 
-The far-field TTC count shows the main open problem. Most of the scene lies in the low-confidence zone, where position noise produces false conflicts. Better depth calibration and ground-truth scoring are the next priorities. See [RESEARCH_NOTES.md](RESEARCH_NOTES.md) for the plan.
+The far-field TTC count shows the main open problem. Most of the scene lies in the low-confidence zone, where position noise produces false conflicts. Better depth calibration and ground-truth scoring are the next priorities.
 
 ---
 
@@ -99,10 +99,7 @@ eval.py                 coverage, track-length and per-class evaluation
 eda.py                  lane, speed, headway and fundamental-diagram analysis
 ttc.py                  TTC / MTTC / DRAC conflict detection
 trackeval_export.py     export predictions in MOTChallenge format
-configs/                alternative tracker configs
 assets/                 README GIFs
-report/                 LaTeX project report and figures
-RESEARCH_NOTES.md       literature notes and next-phase plan
 ```
 
 ---
