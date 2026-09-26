@@ -3,7 +3,7 @@ import numpy as np
 
 from road_seg import segment_road
 
-IMAGE_PATH = r"C:\Users\Aarav Gupta\OneDrive\Desktop\DIGITAL_TWIN\calibration_frame.jpg"
+IMAGE_PATH = "calibration_frame.jpg"
 
 TOP_ROW_TARGET_FRAC = 0.42
 TOP_ROW_SEARCH_RANGE = 60

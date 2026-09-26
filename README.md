@@ -1,237 +1,149 @@
-# URBAN-DIGITAL-TWIN-PERCEPTION-ENGINE
-# TalkToMyTwin
+# URBAN DIGITAL TWIN PERCEPTION ENGINE
 
-### Conversational Traffic Digital Twin for Intelligent Road Monitoring and Safety
+### TalkToMyTwin: a conversational traffic digital twin built from a single roadside camera
 
----
-
-## Overview
-
-**TalkToMyTwin** is an intelligent traffic monitoring platform that transforms ordinary roadside camera feeds into a real-time **Traffic Digital Twin**.
-
-The system continuously monitors vehicle movement, traffic conditions, and potential hazards by combining:
-
-* Computer Vision
-* Digital Twin Technology
-* Spatial Traffic Intelligence
-* Automated Safety Alerts
-* Proactive Traffic Prediction
-* Optional Conversational AI Interface
-
-Instead of requiring operators to continuously monitor multiple CCTV feeds, the system automatically analyzes traffic situations and provides actionable insights.
+TalkToMyTwin turns ordinary traffic footage into a live, metric, bird's-eye model of the road. Every vehicle is detected, tracked, projected onto the ground plane, and logged with its position over time. On top of that log sit analytics and safety measures such as speed, lane usage, headway and time-to-collision. A conversational layer that explains what the twin sees is planned.
 
 ---
 
 ## Demo
 
-Running `digital_twin_log.py` produces three synchronized outputs from a single pass over the source footage:
+One pass of `digital_twin_log.py` over a clip produces three synchronized views plus a per-detection CSV log.
 
-| Output | Video | What it shows |
+**Source tracking:** YOLO detections, persistent track IDs, and the estimated ground-contact point of each vehicle.
+
+<p align="center"><img src="assets/source_tracking.gif" width="640" alt="Source tracking"></p>
+
+**Digital twin (2D bird's-eye):** each vehicle is a point on the road plane in meters, with heading arrows and proximity lines between nearby vehicles. Green points are near-field (high position confidence) and orange points are far-field.
+
+<p align="center"><img src="assets/twin_2d.gif" width="640" alt="2D digital twin"></p>
+
+**Digital twin (3D):** the same scene on a single ground plane, colored by vehicle class.
+
+<p align="center"><img src="assets/twin_3d.gif" width="480" alt="3D digital twin"></p>
+
+---
+
+## Current Progress
+
+| Stage | Status | Where |
 | --- | --- | --- |
-| **Source Tracking** | [Watch](demo_source_tracking.mp4) | The original footage with YOLO detection boxes, track IDs, and the estimated ground-contact point for each vehicle |
-| **Digital Twin (2D)** | [Watch](demo_twin_2d.mp4) | The bird's-eye twin — each vehicle as a point on the road plane, with heading arrows and proximity lines between nearby vehicles |
-| **Digital Twin (3D)** | [Watch](demo_twin_3d.mp4) | The same twin rendered as a rotatable 3D scene, with every vehicle on a single ground plane |
-
-All three are written in lockstep with the per-detection log (`tracking_log.csv`), so any frame in the videos can be traced back to the underlying coordinates.
-
----
-
-# Core Idea
-
-The project converts flat 2D traffic footage into a live mathematical representation of road traffic.
-
-Each detected vehicle becomes a virtual entity possessing:
-
-* Vehicle ID
-* Position Coordinates
-* Speed
-* Direction
-* Lane Information
-* Historical Trajectory
-
-This creates a continuously updating **Digital Twin** of the traffic environment.
+| Road segmentation (SegFormer, Cityscapes) | Done | `road_seg.py` |
+| Automatic calibration frame selection | Done | `best_frame.py` |
+| Automatic homography / IPM from fitted road edges | Done | `homo_IPM.py` |
+| Vehicle detection + multi-object tracking (YOLO11s + BoT-SORT) | Done | `digital_twin_log.py` |
+| Ground-point refinement, smoothing, jump rejection | Done | `digital_twin_log.py` |
+| Live 2D + 3D twin with video recording | Done | `digital_twin_log.py` |
+| Per-detection CSV logging | Done | `tracking_log.csv` |
+| Kalman filter kinematics (position, velocity, acceleration) | Done | `kalman.py`, `motion.py` |
+| Tracking quality evaluation | Done | `eval.py` |
+| Traffic EDA (lanes, speed, headway, Edie's fundamental diagram) | Done | `eda.py` |
+| Surrogate safety measures (TTC, MTTC, DRAC) | Done (offline) | `ttc.py` |
+| MOT-format export for TrackEval | Done | `trackeval_export.py` |
+| Ground-truth annotation + HOTA/MOTA scoring | In progress | |
+| Real-time alert engine | Planned | |
+| Multi-camera fusion (other intersection approaches) | Planned | |
+| Conversational interface (LLM explains twin state) | Planned | |
 
 ---
 
-# System Architecture
+## Pipeline
 
 ```text
-Road Camera Feed
-        ↓
-Vehicle Detection (YOLO)
-        ↓
-Multi-Object Tracking
-        ↓
-Homography / IPM Mapping
-        ↓
-Traffic Digital Twin
-        ↓
-Traffic Intelligence Engine
-        ↓
-Automated Alert System
-        ↓
-Database & Analytics
-        ↓
-(Optional)
-Conversational AI Interface
+Camera feed
+    -> Road segmentation (SegFormer)          road_seg.py
+    -> Calibration frame + homography         best_frame.py, homo_IPM.py
+    -> Detection + tracking (YOLO11s, BoT-SORT)
+    -> Ground-point projection to road plane   digital_twin_log.py
+    -> 2D / 3D twin + tracking_log.csv
+    -> Kalman kinematics                       kalman.py, motion.py
+    -> Evaluation, EDA, safety measures        eval.py, eda.py, ttc.py
+```
+
+**Calibration.** `best_frame.py` scans the clip for the frame with the largest visible road area. `homo_IPM.py` fits straight lines to the left and right road edges of that frame's mask, takes four corners from them, and maps them to a rectangle that assumes a 7 m road width at 120 px/m. The resulting matrix is saved to `homography.npy`.
+
+**Twin.** Each tracked box is reduced to a ground-contact point, refined from the dark band under the vehicle. That point is projected through the homography and smoothed with an exponential moving average. Implausible single-frame jumps are rejected. Detections in the upper 35% of the calibrated region are flagged `low_conf` because homography error grows with distance.
+
+---
+
+## Results So Far
+
+Measured on the 12.6 s `weast` clip (378 frames, 2,494 logged detections):
+
+| Metric | Value |
+| --- | --- |
+| Frames with at least one detection | 378 / 378 (100%) |
+| Detections kept in the twin (in bounds and stable) | 2,404 / 2,494 (96.4%) |
+| Unique tracks | 90 (median length 11.5 frames) |
+| Short tracks (< 5 frames, likely fragments) | 26 / 90 (28.9%) |
+| Class mix | 1,498 car, 498 truck, 495 motorcycle, 3 bus |
+| Near-field TTC warnings | 2 |
+| Far-field TTC warnings | 1,381 |
+
+The far-field TTC count shows the main open problem. Most of the scene lies in the low-confidence zone, where position noise produces false conflicts. Better depth calibration and ground-truth scoring are the next priorities. See [RESEARCH_NOTES.md](RESEARCH_NOTES.md) for the plan.
+
+---
+
+## Repository Layout
+
+```text
+digital_twin_log.py     main pipeline: tracking, twin views, CSV log, video output
+road_seg.py             SegFormer road mask
+best_frame.py           pick the calibration frame
+homo_IPM.py             compute homography.npy from the calibration frame
+kalman.py               constant-acceleration Kalman filter
+motion.py               per-track kinematics from the log
+log_loader.py           typed CSV loader shared by the analysis scripts
+plausibility.py         physical plausibility thresholds
+eval.py                 coverage, track-length and per-class evaluation
+eda.py                  lane, speed, headway and fundamental-diagram analysis
+ttc.py                  TTC / MTTC / DRAC conflict detection
+trackeval_export.py     export predictions in MOTChallenge format
+configs/                alternative tracker configs
+assets/                 README GIFs
+report/                 LaTeX project report and figures
+RESEARCH_NOTES.md       literature notes and next-phase plan
 ```
 
 ---
 
-# Features
+## Getting Started
 
-## Traffic Digital Twin
+```bash
+pip install ultralytics opencv-python torch transformers pandas matplotlib numpy
+```
 
-* Real-time vehicle monitoring
-* Vehicle trajectory tracking
-* Speed estimation
-* Lane occupancy analysis
-* Historical traffic state generation
+Place source clips in `dataset/`, which git ignores. The `yolo11s.pt` weights are not in the repo; Ultralytics downloads them automatically on first run. Then run:
 
----
+```bash
+python best_frame.py          # writes calibration_frame.jpg
+python homo_IPM.py            # writes homography.npy
+python digital_twin_log.py    # live views, output_*.avi, tracking_log.csv
+```
 
-## Automated Alert System
+Controls in the live window: `space` pauses, `n` steps one frame while paused, and `q` or `Esc` quits.
 
-The system autonomously generates alerts for:
+The analysis scripts read `tracking_log.csv` and need no GPU:
 
-* Rear-End Collision Risk
-* Heavy Traffic Congestion
-* Wrong-Way Driving
-* Stalled Vehicles
-* Sudden Braking Events
-* Possible Road Blockages
-
-Alerts are generated using deterministic mathematical reasoning to ensure low latency and high reliability.
-
----
-
-## Proactive Traffic Intelligence
-
-The platform does not only identify current traffic situations but also predicts future risks such as:
-
-* Increasing congestion
-* Rising collision probability
-* Dangerous traffic zones
-* Future traffic build-up
-
-This allows the system to act proactively instead of reactively.
+```bash
+python eval.py
+python eda.py
+python ttc.py
+python trackeval_export.py
+```
 
 ---
 
-## Traffic Analytics
+## Tech Stack
 
-* Vehicle Count Analysis
-* Traffic Density Estimation
-* Speed Distribution
-* Lane Utilization Analysis
-* Heatmaps
-* Historical Traffic Reports
-* Event Timeline Generation
+Python, PyTorch, Ultralytics YOLO11, BoT-SORT, Hugging Face Transformers (SegFormer), OpenCV, NumPy, Pandas, Matplotlib.
 
 ---
 
-## Conversational AI Interface (Phase 3 - Optional)
+## Roadmap
 
-The conversational AI component acts purely as an interaction and explanation layer.
-
-Users can ask questions such as:
-
-* Why is traffic slowing down?
-* Which lane is most congested?
-* What caused congestion at 5 PM?
-* Generate today's traffic report.
-* Summarize historical traffic conditions.
-
-The LLM **does not participate in safety decisions or alert generation**.
-
----
-
-# Tech Stack
-
-### Computer Vision
-
-* Python
-* OpenCV
-* PyTorch
-* Ultralytics YOLO
-
-### Tracking
-
-* ByteTrack / BoT-SORT
-
-### Digital Twin
-
-* Homography
-* Inverse Perspective Mapping (IPM)
-
-### Data Processing
-
-* NumPy
-* Pandas
-* SciPy
-
-### Database
-
-* SQLite / PostgreSQL
-
-### Analytics
-
-* Matplotlib
-* Plotly
-
-### Conversational AI (Optional)
-
-* Gemini API
-* OpenAI API
-
----
-
----
-
-# Applications
-
-* Smart Cities
-* Intelligent Transportation Systems (ITS)
-* Traffic Monitoring Centers
-* Highway Monitoring Systems
-* Urban Planning
-* Accident Prevention Systems
-* Smart Road Infrastructure
-
----
-
-# Future Scope
-
-* Multi-Camera Traffic Digital Twins
-* Historical Traffic Replay
-* Traffic Signal Optimization
-* Vehicle Flow Forecasting
-* Edge Deployment
-* Smart City Integration
-* Advanced Conversational Traffic Assistant
-
----
-
-# Novel Contribution
-
-TalkToMyTwin combines:
-
-Computer Vision
-
-Digital Twin Technology
-
-Spatial Traffic Intelligence
-
-Proactive Traffic Prediction
-
-Automated Safety Alerts
-
-Conversational AI Interfaces
-
-to create an intelligent traffic monitoring platform capable of understanding, predicting, and explaining real-world traffic situations in real time.
-
----
-
-# Citation
-
-If you find this project useful, please consider starring it on GitHub.
+- Hand-annotate a ground-truth clip and report HOTA / MOTA / IDF1 with TrackEval
+- Improve depth-axis calibration to cut far-field false conflicts
+- Lane-aware, heading-gated conflict detection and a live alert stream
+- Fuse the other intersection approach cameras (North, South, East, ...) into one twin
+- Store twin state in a database and add a conversational query layer on top

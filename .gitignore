@@ -1,9 +1,13 @@
 dataset/
+testing images/
 
-output_tracking_source.*
-output_digital_twin.*
+output_*.avi
+output_*.mp4
+predictions_mot.txt
+report/*.zip
 
 __pycache__/
 *.pyc
 
-testing images/
+*.pt
+.vscode/

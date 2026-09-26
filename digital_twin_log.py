@@ -23,7 +23,7 @@ if device == "cuda":
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-VIDEO_PATH = r"C:\Users\Aarav Gupta\OneDrive\Desktop\DIGITAL_TWIN\dataset\Weast (1).mp4"
+VIDEO_PATH = "dataset/Weast (1).mp4"
 HOMOGRAPHY_PATH = "homography.npy"
 
 OUTPUT_WIDTH = 840
@@ -211,7 +211,7 @@ while True:
         results = model.track(
             frame,
             persist=True,
-            tracker="tracktrack_reid_loose.yaml",
+            tracker="botsort.yaml",
             classes=[2, 3, 5, 7],
             imgsz=1280,
             conf=0.1,
@@ -277,6 +277,10 @@ while True:
                 "track_id": track_id,
                 "class_id": int(cls_arr[idx]),
                 "conf": float(conf_arr[idx]),
+                "x1": tx1,
+                "y1": ty1,
+                "x2": tx2,
+                "y2": ty2,
                 "X": float(X),
                 "Y": float(Y),
                 "low_conf": bool(low_conf),

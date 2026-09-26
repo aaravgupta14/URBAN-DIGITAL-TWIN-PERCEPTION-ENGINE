@@ -3,7 +3,7 @@ import numpy as np
 
 from road_seg import segment_road
 
-video_path = r"C:\Users\Aarav Gupta\OneDrive\Desktop\DIGITAL_TWIN\dataset\Weast (1).mp4"
+video_path = "dataset/Weast (1).mp4"
 
 cap = cv2.VideoCapture(video_path)
 
