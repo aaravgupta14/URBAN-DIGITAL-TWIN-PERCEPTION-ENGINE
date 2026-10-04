@@ -14,3 +14,12 @@ __pycache__/
 configs/
 report/
 RESEARCH_NOTES.md
+assets/
+
+trackeval_data/
+label_clip.mp4
+sanity_checks.png
+speed_eval.csv
+sections/*/before/
+sections/*/*.avi
+sections/*/*.mp4

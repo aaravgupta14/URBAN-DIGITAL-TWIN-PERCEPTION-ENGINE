@@ -1,9 +1,9 @@
 import statistics
 from collections import defaultdict
 
-from log_loader import load_rows
-from motion import build_kinematics, UNITS_PER_METER, FPS
-from plausibility import is_implausible_speed
+from log_loader_Generalized import load_rows
+from motion_Generalized import build_kinematics, UNITS_PER_METER, FPS
+from plausibility_Generalized import is_implausible_speed
 
 LOG_PATH = "tracking_log.csv"
 CLASS_NAMES = {2: "car", 7: "truck", 5: "bus", 3: "motorcycle", 1: "bicycle", 0: "pedestrian"}

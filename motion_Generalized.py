@@ -1,9 +1,9 @@
-from kalman import constant_acceleration_kf
+from kalman_Generalized import constant_acceleration_kf
+from scene_Generalized import load_calib, UNITS_PER_METER
 
-UNITS_PER_METER = 120
-FPS = 30.0
-KF_Q_VAR = 1.0
-KF_R_VAR = 0.05
+FPS = float(load_calib()["fps"])
+KF_Q_VAR = 0.1
+KF_R_VAR = 0.25
 
 def build_frame_index(rows):
     frames = {}

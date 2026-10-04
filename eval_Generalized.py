@@ -1,13 +1,13 @@
 import statistics
 from collections import Counter, defaultdict
 
-from log_loader import load_rows
+from log_loader_Generalized import load_rows
+from scene_Generalized import output_size
 
 LOG_PATH = "tracking_log.csv"
 CLASS_NAMES = {2: "car", 7: "truck", 5: "bus", 3: "motorcycle", 1: "bicycle", 0: "pedestrian"}
 SHORT_TRACK_FRAMES = 5
-UNPADDED_WIDTH = 840
-UNPADDED_HEIGHT = 306
+UNPADDED_WIDTH, UNPADDED_HEIGHT = output_size()
 
 def unpadded_in_bounds(r):
     return 0 <= r["X"] < UNPADDED_WIDTH and 0 <= r["Y"] < UNPADDED_HEIGHT
