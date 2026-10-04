@@ -93,6 +93,7 @@ def load_fit_pairs():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hfov", type=float, default=None, help="force horizontal field of view (deg)")
+    parser.add_argument("--focal", type=float, default=None, help="force focal length in pixels (same camera elsewhere)")
     parser.add_argument("--max-depth", type=float, default=MAX_DEPTH_M)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
@@ -114,7 +115,11 @@ def main():
     all_pairs = load_fit_pairs()
     fit = [p for p in all_pairs if p["kind"] == "fit"]
     check = [p for p in all_pairs if p["kind"] == "check"]
-    if args.hfov is not None or not fit:
+    if args.focal is not None:
+        f = args.focal
+        hfov = 2 * np.degrees(np.arctan(cx / f))
+        print(f"focal length                 : {f:.0f} px fixed from another calibration (HFOV {hfov:.0f} deg)")
+    elif args.hfov is not None or not fit:
         hfov = args.hfov or DEFAULT_HFOV_DEG
         f = cx / np.tan(np.radians(hfov) / 2)
         print(f"focal length                 : {f:.0f} px from assumed HFOV {hfov:.0f} deg")
