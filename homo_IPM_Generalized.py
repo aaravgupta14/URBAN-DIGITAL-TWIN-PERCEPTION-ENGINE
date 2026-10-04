@@ -1,9 +1,13 @@
+import sys
+
 import cv2
 import numpy as np
 
-from road_seg import segment_road
+from road_seg_Generalized import segment_road
+from scene_Generalized import load_calib, save_calib, H_PATH, H_RAW_PATH
 
 IMAGE_PATH = "calibration_frame.jpg"
+SHOW = "--no-show" not in sys.argv
 
 TOP_ROW_TARGET_FRAC = 0.42
 TOP_ROW_SEARCH_RANGE = 60
@@ -107,7 +111,8 @@ cv2.line(display, points[0], points[1], (0, 255, 255), 2)
 cv2.line(display, points[1], points[2], (0, 255, 255), 2)
 cv2.line(display, points[2], points[3], (0, 255, 255), 2)
 cv2.line(display, points[3], points[0], (0, 255, 255), 2)
-cv2.imshow("Calibration (auto)", display)
+if SHOW:
+    cv2.imshow("Calibration (auto)", display)
 
 src = np.float32(points)
 
@@ -129,7 +134,12 @@ dst = np.float32([
 
 H = cv2.getPerspectiveTransform(src, dst)
 
-np.save("homography.npy", H)
+np.save(H_PATH, H)
+np.save(H_RAW_PATH, H)
+
+calib = load_calib()
+calib.update({"raw_width": OUTPUT_WIDTH, "raw_height": OUTPUT_HEIGHT, "sx": 1.0, "sy": 1.0})
+save_calib(calib)
 
 bird = cv2.warpPerspective(
     image,
@@ -140,12 +150,14 @@ bird = cv2.warpPerspective(
     borderValue=(0, 0, 0)
 )
 
-cv2.imshow("Bird Eye", bird)
+if SHOW:
+    cv2.imshow("Bird Eye", bird)
 
-print("\nHomography saved as homography.npy")
+print(f"\nHomography saved as {H_PATH} and {H_RAW_PATH}; depth scale reset, rerun depth_calib_Generalized.py --solve")
 print(f"Output Size : {OUTPUT_WIDTH} x {OUTPUT_HEIGHT}")
 print(f"Scale: {PIXELS_PER_METER} px/m (assumed road width {STANDARD_ROAD_WIDTH_M}m; "
       f"width axis is anchored to this, depth axis uses the same px/m but is an estimate)")
 
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+if SHOW:
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()

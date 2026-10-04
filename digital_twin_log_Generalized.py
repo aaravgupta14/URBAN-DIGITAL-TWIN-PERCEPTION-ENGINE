@@ -1,4 +1,6 @@
 
+import argparse
+
 import cv2
 import numpy as np
 import torch
@@ -11,6 +13,12 @@ from queue import Queue, Empty, Full
 from threading import Event
 from collections import deque
 import os
+
+from scene_Generalized import (
+    load_calib, output_size, in_bounds as world_in_bounds, H_PATH,
+    load_transforms, to_reference,
+    UNITS_PER_METER, PAD_LEFT, PAD_RIGHT, PAD_TOP, PAD_BOTTOM,
+)
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 cv2.setNumThreads(1)
 torch.set_num_threads(1)
@@ -23,18 +31,30 @@ if device == "cuda":
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-VIDEO_PATH = "dataset/Weast (1).mp4"
-HOMOGRAPHY_PATH = "homography.npy"
+parser = argparse.ArgumentParser()
+parser.add_argument("--video", default="dataset/Weast (1).mp4")
+parser.add_argument("--start", type=int, default=0, help="first frame to process (0-based)")
+parser.add_argument("--end", type=int, default=None, help="last frame to process (0-based)")
+parser.add_argument("--log", default="tracking_log.csv")
+parser.add_argument("--model", default="yolo11s.pt")
+ARGS = parser.parse_args()
 
-OUTPUT_WIDTH = 840
-OUTPUT_HEIGHT = 306
-PAD_LEFT = 16
-PAD_RIGHT = 96
-PAD_TOP = 80
-PAD_BOTTOM = 16
-CANVAS_WIDTH = OUTPUT_WIDTH + PAD_LEFT + PAD_RIGHT
-CANVAS_HEIGHT = OUTPUT_HEIGHT + PAD_TOP + PAD_BOTTOM
-UNITS_PER_METER = 120
+VIDEO_PATH = ARGS.video
+HOMOGRAPHY_PATH = H_PATH
+
+CALIB = load_calib()
+OUTPUT_WIDTH, OUTPUT_HEIGHT = output_size(CALIB)
+WORLD_WIDTH = OUTPUT_WIDTH + PAD_LEFT + PAD_RIGHT
+WORLD_HEIGHT = OUTPUT_HEIGHT + PAD_TOP + PAD_BOTTOM
+
+VIEW_MAX_WIDTH = 1200
+VIEW_MAX_HEIGHT = 720
+VIEW_MIN_WIDTH = 520
+VIEW_HEADER = 40
+VIEW_SCALE = min(1.0, VIEW_MAX_WIDTH / WORLD_WIDTH, VIEW_MAX_HEIGHT / WORLD_HEIGHT)
+CANVAS_WIDTH = max(int(WORLD_WIDTH * VIEW_SCALE), VIEW_MIN_WIDTH)
+CANVAS_HEIGHT = int(WORLD_HEIGHT * VIEW_SCALE) + VIEW_HEADER
+VIEW_OFFSET_X = (CANVAS_WIDTH - int(WORLD_WIDTH * VIEW_SCALE)) // 2
 PROXIMITY_THRESHOLD = int(2.5 * UNITS_PER_METER)
 ARROW_LENGTH = 20
 MIN_MOVEMENT_FOR_ARROW = 2
@@ -49,9 +69,9 @@ FRAME_QUEUE_MAX = 4
 RECORD = True
 SOURCE_OUTPUT_PATH = "output_tracking_source.avi"
 TWIN_OUTPUT_PATH = "output_digital_twin.avi"
-RECORD_FPS = 30.0
+RECORD_FPS = float(CALIB["fps"])
 
-LOG_PATH = "tracking_log.csv"
+LOG_PATH = ARGS.log
 VIDEO_LABEL = "weast"
 
 CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -67,7 +87,12 @@ UPDATE_EVERY = 2
 GRAPH_OUTPUT_PATH = "output_digital_twin_3d.avi"
 
 H = np.load(HOMOGRAPHY_PATH)
+STAB_T = load_transforms()
+print("Stabilization: " + ("loaded, ground points mapped to the calibration frame" if STAB_T is not None
+                           else "not found, assuming a static camera (run stabilize_video_calb.py)"))
 H_inv = np.linalg.inv(H)
+print(f"Twin world: {OUTPUT_WIDTH / UNITS_PER_METER:.1f} m x {OUTPUT_HEIGHT / UNITS_PER_METER:.1f} m "
+      f"(sx={CALIB['sx']:.3f}, sy={CALIB['sy']:.3f}), view scale {VIEW_SCALE:.3f}")
 _canvas_corners = np.float32(
     [[0, 0], [OUTPUT_WIDTH, 0], [OUTPUT_WIDTH, OUTPUT_HEIGHT], [0, OUTPUT_HEIGHT]]
 ).reshape(-1, 1, 2)
@@ -78,7 +103,7 @@ LOW_CONF_Y = CALIB_TOP_Y + 0.35 * (CALIB_BOTTOM_Y - CALIB_TOP_Y)
 print(f"Calibrated image-y range: {CALIB_TOP_Y:.0f} - {CALIB_BOTTOM_Y:.0f} "
       f"(low-confidence below y={LOW_CONF_Y:.0f})")
 
-model = YOLO("yolo11s.pt")
+model = YOLO(ARGS.model)
 model.to(device)
 dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
 print("Warming up GPU...")
@@ -92,6 +117,7 @@ print("Warm-up complete.")
 cap = cv2.VideoCapture(VIDEO_PATH)
 if not cap.isOpened():
     raise FileNotFoundError(f"Could not open video: {VIDEO_PATH}")
+cap.set(cv2.CAP_PROP_POS_FRAMES, ARGS.start)
 
 source_writer = None
 twin_writer = None
@@ -107,10 +133,14 @@ frame_queue: "Queue" = Queue(maxsize=FRAME_QUEUE_MAX)
 stop_event = Event()
 
 def video_reader():
+    pos = ARGS.start
     while not stop_event.is_set():
+        if ARGS.end is not None and pos > ARGS.end:
+            break
         ret, frame = cap.read()
         if not ret:
             break
+        pos += 1
         while not stop_event.is_set():
             try:
                 frame_queue.put(frame, timeout=0.5)
@@ -137,6 +167,9 @@ def format_distance(d):
     if UNITS_PER_METER:
         return f"{d / UNITS_PER_METER:.1f} m"
     return f"{int(d)} u"
+
+def to_view(X, Y):
+    return int(X * VIEW_SCALE) + VIEW_OFFSET_X, int(Y * VIEW_SCALE) + VIEW_HEADER
 
 def refine_ground_point(frame, x1, y1, x2, y2):
     h = y2 - y1
@@ -172,7 +205,7 @@ step_history = {}
 smoothed_positions = {}
 track_class = {}
 log_rows = []
-frame_idx = 0
+frame_idx = ARGS.start
 
 plt.ion()
 fig3d = plt.figure(figsize=(6, 5))
@@ -181,8 +214,8 @@ ax3d = fig3d.add_subplot(111, projection="3d")
 ax3d.set_xlabel("X (across road)")
 ax3d.set_ylabel("Y (0 = far)")
 ax3d.set_zlabel("Z (road plane)")
-ax3d.set_xlim(0, CANVAS_WIDTH)
-ax3d.set_ylim(0, CANVAS_HEIGHT)
+ax3d.set_xlim(0, WORLD_WIDTH)
+ax3d.set_ylim(0, WORLD_HEIGHT)
 ax3d.set_zlim(-Z_LIM, Z_LIM)
 ax3d.set_zticks([Z_PLANE])
 title3d = ax3d.set_title("Live 3D Digital Twin")
@@ -244,8 +277,14 @@ while True:
         ]
         cx_arr = np.array([p[0] for p in ground_pts], dtype=np.float64)
         cy_arr = np.array([p[1] for p in ground_pts], dtype=np.float64)
-        pts = np.stack([cx_arr, cy_arr], axis=1).astype(np.float32).reshape(-1, 1, 2)
-        world_pts = cv2.perspectiveTransform(pts, H).reshape(-1, 2)
+        image_pts = np.stack([cx_arr, cy_arr], axis=1)
+        ref_pts = to_reference(STAB_T, frame_idx - 1, image_pts)
+        stab_ok = ref_pts is not None
+        if not stab_ok:
+            ref_pts = image_pts
+        world_pts = cv2.perspectiveTransform(
+            ref_pts.astype(np.float32).reshape(-1, 1, 2), H
+        ).reshape(-1, 2)
 
         for tid in ids:
             track_streak[int(tid)] = track_streak.get(int(tid), 0) + 1
@@ -256,7 +295,7 @@ while True:
             tx2, ty2 = int(x2[idx]), int(y2[idx])
             cx, cy = int(cx_arr[idx]), int(cy_arr[idx])
             X, Y = world_pts[idx]
-            low_conf = cy_arr[idx] < LOW_CONF_Y
+            low_conf = ref_pts[idx, 1] < LOW_CONF_Y
 
             cv2.rectangle(annotated_frame, (tx1, ty1), (tx2, ty2), (0, 255, 0), 2)
             cv2.circle(annotated_frame, (cx, cy), 5, (0, 0, 255), -1)
@@ -265,10 +304,7 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
             )
 
-            in_bounds = (
-                -PAD_LEFT <= X < OUTPUT_WIDTH + PAD_RIGHT
-                and -PAD_TOP <= Y < OUTPUT_HEIGHT + PAD_BOTTOM
-            )
+            in_bounds = stab_ok and world_in_bounds(X, Y, OUTPUT_WIDTH, OUTPUT_HEIGHT)
             stable = track_streak[track_id] >= MIN_TRACK_AGE
 
             log_rows.append({
@@ -281,6 +317,9 @@ while True:
                 "y1": ty1,
                 "x2": tx2,
                 "y2": ty2,
+                "gx": float(ref_pts[idx, 0]),
+                "gy": float(ref_pts[idx, 1]),
+                "stab_ok": bool(stab_ok),
                 "X": float(X),
                 "Y": float(Y),
                 "low_conf": bool(low_conf),
@@ -306,9 +345,10 @@ while True:
     for v in vehicles:
 
         color = (0, 165, 255) if v["low_conf"] else (0, 255, 0)
-        cv2.circle(canvas, (int(v["X"]), int(v["Y"])), 7, color, -1)
+        vx, vy = to_view(v["X"], v["Y"])
+        cv2.circle(canvas, (vx, vy), 7, color, -1)
         cv2.putText(
-            canvas, f"ID:{v['id']}", (int(v["X"]) + 10, int(v["Y"]) - 10),
+            canvas, f"ID:{v['id']}", (vx + 10, vy - 10),
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
         )
 
@@ -327,8 +367,8 @@ while True:
             if not anomalous:
                 if mag > MIN_MOVEMENT_FOR_ARROW:
                     ux, uy = dx / mag, dy / mag
-                    tip = (int(v["X"] + ux * ARROW_LENGTH), int(v["Y"] + uy * ARROW_LENGTH))
-                    cv2.arrowedLine(canvas, (int(v["X"]), int(v["Y"])), tip, (255, 255, 0), 2, tipLength=0.35)
+                    tip = (int(vx + ux * ARROW_LENGTH), int(vy + uy * ARROW_LENGTH))
+                    cv2.arrowedLine(canvas, (vx, vy), tip, (255, 255, 0), 2, tipLength=0.35)
                 history.append(mag)
 
     prev_positions = {v["id"]: (v["X"], v["Y"]) for v in vehicles}
@@ -338,8 +378,8 @@ while True:
         Ys = [v["Y"] for v in vehicles]
         for i, j, dist in compute_close_pairs(Xs, Ys, PROXIMITY_THRESHOLD):
             v1, v2 = vehicles[i], vehicles[j]
-            p1 = (int(v1["X"]), int(v1["Y"]))
-            p2 = (int(v2["X"]), int(v2["Y"]))
+            p1 = to_view(v1["X"], v1["Y"])
+            p2 = to_view(v2["X"], v2["Y"])
             cv2.line(canvas, p1, p2, (0, 0, 255), 2)
             mx, my = (p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2
             cv2.putText(
@@ -351,7 +391,7 @@ while True:
     dropped = total_tracked - plotted
     info_text = f"Tracked: {total_tracked}  Plotted: {plotted}  Dropped: {dropped}"
     cv2.putText(annotated_frame, info_text, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-    cv2.putText(canvas, info_text, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    cv2.putText(canvas, info_text, (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
     if RECORD:
         source_writer.write(annotated_frame)

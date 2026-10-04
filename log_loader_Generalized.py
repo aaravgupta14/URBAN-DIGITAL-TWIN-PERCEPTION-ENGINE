@@ -13,6 +13,9 @@ def load_rows(path):
                 r["y1"] = int(r["y1"])
                 r["x2"] = int(r["x2"])
                 r["y2"] = int(r["y2"])
+            if r.get("gx"):
+                r["gx"] = float(r["gx"])
+                r["gy"] = float(r["gy"])
             r["X"] = float(r["X"])
             r["Y"] = float(r["Y"])
             r["in_bounds"] = r["in_bounds"].strip().lower() == "true"
