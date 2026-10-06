@@ -23,3 +23,7 @@ speed_eval.csv
 sections/*/before/
 sections/*/*.avi
 sections/*/*.mp4
+*.db
+*.db-wal
+*.db-shm
+alerts.csv

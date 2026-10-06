@@ -1,16 +1,23 @@
 
 import argparse
+import sys
+import tempfile
+import time
 
 import cv2
 import numpy as np
 import torch
 import pandas as pd
+import yaml
+import matplotlib
+if "--no-show" in sys.argv:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_rgba
 from ultralytics import YOLO
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue, Empty, Full
-from threading import Event
+from threading import Event, Thread
 from collections import deque
 import os
 
@@ -19,6 +26,8 @@ from scene_Generalized import (
     load_transforms, to_reference,
     UNITS_PER_METER, PAD_LEFT, PAD_RIGHT, PAD_TOP, PAD_BOTTOM,
 )
+from alerts_Generalized import AlertEngine
+from twin_db_Generalized import TwinDB
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 cv2.setNumThreads(1)
 torch.set_num_threads(1)
@@ -37,6 +46,11 @@ parser.add_argument("--start", type=int, default=0, help="first frame to process
 parser.add_argument("--end", type=int, default=None, help="last frame to process (0-based)")
 parser.add_argument("--log", default="tracking_log.csv")
 parser.add_argument("--model", default="yolo11s.pt")
+parser.add_argument("--db", default="twin_state.db")
+parser.add_argument("--alerts", default="alerts.csv")
+parser.add_argument("--fast", action="store_true", help="BoT-SORT without camera-motion compensation (~30%% faster)")
+parser.add_argument("--plot3d-every", type=int, default=2, help="draw the 3D view every N frames, 0 disables it")
+parser.add_argument("--no-show", action="store_true", help="no live windows (batch runs)")
 ARGS = parser.parse_args()
 
 VIDEO_PATH = ARGS.video
@@ -63,6 +77,8 @@ STEP_HISTORY_LEN = 8
 JUMP_ANOMALY_MULT = 6
 JUMP_ANOMALY_MIN_ABS = int(0.125 * UNITS_PER_METER)
 SMOOTHING_ALPHA = 0.4
+GROUND_MAX_RISE_FRAC = 0.2
+EDGE_MARGIN_PX = 3
 
 FRAME_QUEUE_MAX = 4
 
@@ -83,8 +99,13 @@ Z_LIM = 1.0
 CLASS_RGBA = {name: to_rgba(c) for name, c in CLASS_COLORS.items()}
 DEFAULT_RGBA = to_rgba("gray")
 
-UPDATE_EVERY = 2
+UPDATE_EVERY = ARGS.plot3d_every
 GRAPH_OUTPUT_PATH = "output_digital_twin_3d.avi"
+
+ALERT_COLORS = {"critical": (0, 0, 255), "warning": (0, 165, 255)}
+ALERT_TYPE_COLORS = {"sudden_acceleration": (255, 0, 255)}
+ALERT_LABELS = {"conflict": "CONFLICT", "overspeed": "OVERSPEED", "sudden_acceleration": "SUDDEN ACCEL"}
+BANNER_MAX = 4
 
 H = np.load(HOMOGRAPHY_PATH)
 STAB_T = load_transforms()
@@ -103,13 +124,59 @@ LOW_CONF_Y = CALIB_TOP_Y + 0.35 * (CALIB_BOTTOM_Y - CALIB_TOP_Y)
 print(f"Calibrated image-y range: {CALIB_TOP_Y:.0f} - {CALIB_BOTTOM_Y:.0f} "
       f"(low-confidence below y={LOW_CONF_Y:.0f})")
 
+USE_HALF = device == "cuda"
+TRACK_DEVICE = 0 if device == "cuda" else "cpu"
+
+
+def tracker_config():
+    if not ARGS.fast:
+        return "botsort.yaml"
+    import ultralytics
+    with open(os.path.join(os.path.dirname(ultralytics.__file__), "cfg", "trackers", "botsort.yaml")) as f:
+        cfg = yaml.safe_load(f)
+    cfg["gmc_method"] = "none"
+    path = os.path.join(tempfile.gettempdir(), "botsort_no_gmc.yaml")
+    with open(path, "w") as f:
+        yaml.safe_dump(cfg, f)
+    return path
+
+
+TRACKER_CFG = tracker_config()
+print(f"Tracker: {'BoT-SORT without GMC (fast)' if ARGS.fast else 'BoT-SORT'}, "
+      f"{'fp16' if USE_HALF else 'fp32'} on {device}")
+
+
+class AsyncWriter:
+    def __init__(self):
+        self.queue = Queue(maxsize=64)
+        self.thread = Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while True:
+            item = self.queue.get()
+            if item is None:
+                break
+            writer, image = item
+            writer.write(image)
+
+    def write(self, writer, image):
+        self.queue.put((writer, image))
+
+    def close(self):
+        self.queue.put(None)
+        self.thread.join()
+
+
+async_writer = AsyncWriter()
+
 model = YOLO(ARGS.model)
 model.to(device)
 dummy = np.zeros((720, 1280, 3), dtype=np.uint8)
 print("Warming up GPU...")
 for _ in range(5):
     with torch.inference_mode():
-        model.predict(dummy, device=0, half=True, verbose=False)
+        model.predict(dummy, device=TRACK_DEVICE, half=USE_HALF, verbose=False)
 if device == "cuda":
     torch.cuda.synchronize()
 print("Warm-up complete.")
@@ -192,6 +259,8 @@ def refine_ground_point(frame, x1, y1, x2, y2):
     dark_rows = np.where(row_brightness < row_brightness.mean())[0]
     ground_row = int(dark_rows.max()) if len(dark_rows) else strip.shape[0] - 1
     refined_y = band_top + ground_row
+    if refined_y < y2 - GROUND_MAX_RISE_FRAC * h:
+        refined_y = y2
     return (x1 + x2) // 2, refined_y
 
 executor = ThreadPoolExecutor(max_workers=1)
@@ -206,6 +275,17 @@ smoothed_positions = {}
 track_class = {}
 log_rows = []
 frame_idx = ARGS.start
+frame_times = deque(maxlen=300)
+
+engine = AlertEngine(RECORD_FPS)
+db = TwinDB(ARGS.db)
+db.start_run(VIDEO_PATH, ARGS.start + 1, None if ARGS.end is None else ARGS.end + 1, RECORD_FPS, CALIB)
+print(f"Alerts: limit {__import__('alerts_Generalized').SPEED_LIMIT_KMH:.0f} km/h; "
+      f"writing {ARGS.alerts} and run {db.run_id} in {ARGS.db}")
+
+
+def alert_color(a):
+    return ALERT_TYPE_COLORS.get(a["type"], ALERT_COLORS[a["severity"]])
 
 plt.ion()
 fig3d = plt.figure(figsize=(6, 5))
@@ -244,12 +324,12 @@ while True:
         results = model.track(
             frame,
             persist=True,
-            tracker="botsort.yaml",
+            tracker=TRACKER_CFG,
             classes=[2, 3, 5, 7],
             imgsz=1280,
             conf=0.1,
-            device=0,
-            half=False,
+            device=TRACK_DEVICE,
+            half=USE_HALF,
             verbose=False,
         )
 
@@ -258,6 +338,8 @@ while True:
     canvas = np.full((CANVAS_HEIGHT, CANVAS_WIDTH, 3), (40, 40, 40), dtype=np.uint8)
 
     vehicles = []
+    live_vehicles = []
+    frame_boxes = {}
     total_tracked = 0
 
     if boxes.id is not None:
@@ -304,7 +386,9 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2,
             )
 
-            in_bounds = stab_ok and world_in_bounds(X, Y, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+            truncated = (tx1 <= EDGE_MARGIN_PX or tx2 >= frame.shape[1] - EDGE_MARGIN_PX
+                         or ty2 >= frame.shape[0] - EDGE_MARGIN_PX)
+            in_bounds = stab_ok and not truncated and world_in_bounds(X, Y, OUTPUT_WIDTH, OUTPUT_HEIGHT)
             stable = track_streak[track_id] >= MIN_TRACK_AGE
 
             log_rows.append({
@@ -320,12 +404,16 @@ while True:
                 "gx": float(ref_pts[idx, 0]),
                 "gy": float(ref_pts[idx, 1]),
                 "stab_ok": bool(stab_ok),
+                "truncated": bool(truncated),
                 "X": float(X),
                 "Y": float(Y),
                 "low_conf": bool(low_conf),
                 "in_bounds": bool(in_bounds),
                 "stable": bool(stable),
             })
+            frame_boxes[track_id] = (tx1, ty1, tx2, ty2)
+            if new_frame:
+                db.add_detection(log_rows[-1])
 
             if in_bounds and stable:
                 prev_smooth = smoothed_positions.get(track_id, (X, Y))
@@ -334,6 +422,11 @@ while True:
                 smoothed_positions[track_id] = (sX, sY)
                 cls_name = CLASS_NAMES.get(int(cls_arr[idx]), "vehicle")
                 track_class[track_id] = cls_name
+                live_vehicles.append({
+                    "track_id": track_id, "class_id": int(cls_arr[idx]),
+                    "x": float(X) / UNITS_PER_METER, "y": float(Y) / UNITS_PER_METER,
+                    "low_conf": bool(low_conf),
+                })
                 vehicles.append({
                     "id": track_id,
                     "X": sX + PAD_LEFT,
@@ -387,20 +480,63 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
             )
 
+    if new_frame:
+        new_alerts, ended_alerts = engine.update(frame_idx, live_vehicles)
+        for a in new_alerts:
+            print(f"[{a['severity'].upper()}] frame {frame_idx} ({a['time_s']:.1f} s) "
+                  f"{ALERT_LABELS[a['type']]}: {a['message']}{' (far field)' if a['far_field'] else ''}")
+            db.save_alert(a)
+        for a in ended_alerts:
+            db.save_alert(a)
+        for lv in live_vehicles:
+            db.add_kinematics(frame_idx, lv["track_id"], engine.kinematics(lv["track_id"]))
+
+    view_pos = {v["id"]: to_view(v["X"], v["Y"]) for v in vehicles}
+    active_alerts = engine.active(frame_idx)
+    for a in active_alerts:
+        color = alert_color(a)
+        for tid in a["tracks"]:
+            if tid in frame_boxes:
+                bx1, by1, bx2, by2 = frame_boxes[tid]
+                cv2.rectangle(annotated_frame, (bx1, by1), (bx2, by2), color, 4)
+                cv2.putText(annotated_frame, ALERT_LABELS[a["type"]], (bx1, by2 + 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            if tid in view_pos:
+                cv2.circle(canvas, view_pos[tid], 13, color, 2)
+        if a["type"] == "conflict" and all(t in view_pos for t in a["tracks"]):
+            cv2.line(canvas, view_pos[a["tracks"][0]], view_pos[a["tracks"][1]], color, 3)
+    for lv in live_vehicles:
+        tid = lv["track_id"]
+        if tid in frame_boxes and engine.tracks[tid].age >= 15:
+            bx1, by1 = frame_boxes[tid][0], frame_boxes[tid][1]
+            cv2.putText(annotated_frame, f"{engine.kinematics(tid)['speed_kmh']:.0f} km/h",
+                        (bx1 + 70, by1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    for i, a in enumerate(active_alerts[-BANNER_MAX:]):
+        text = f"{ALERT_LABELS[a['type']]} {a['message']}"
+        y = 60 + 28 * i
+        cv2.rectangle(annotated_frame, (annotated_frame.shape[1] - 640, y - 20),
+                      (annotated_frame.shape[1] - 10, y + 6), (0, 0, 0), -1)
+        cv2.putText(annotated_frame, text, (annotated_frame.shape[1] - 632, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, alert_color(a), 2)
+
     plotted = len(vehicles)
     dropped = total_tracked - plotted
-    info_text = f"Tracked: {total_tracked}  Plotted: {plotted}  Dropped: {dropped}"
+    if new_frame:
+        frame_times.append(time.perf_counter())
+    proc_fps = (len(frame_times) - 1) / (frame_times[-1] - frame_times[0]) if len(frame_times) > 1 else 0.0
+    info_text = f"Tracked: {total_tracked}  Plotted: {plotted}  Dropped: {dropped}  {proc_fps:.1f} fps"
     cv2.putText(annotated_frame, info_text, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
     cv2.putText(canvas, info_text, (10, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
     if RECORD:
-        source_writer.write(annotated_frame)
-        twin_writer.write(canvas)
+        async_writer.write(source_writer, annotated_frame)
+        async_writer.write(twin_writer, canvas)
 
-    cv2.imshow("Tracking (source)", annotated_frame)
-    cv2.imshow("Digital Twin", canvas)
+    if not ARGS.no_show:
+        cv2.imshow("Tracking (source)", annotated_frame)
+        cv2.imshow("Digital Twin", canvas)
 
-    if new_frame and frame_idx % UPDATE_EVERY == 0:
+    if UPDATE_EVERY and new_frame and frame_idx % UPDATE_EVERY == 0:
         xs = [v["X"] for v in vehicles]
         ys = [v["Y"] for v in vehicles]
         zs = [Z_PLANE] * len(vehicles)
@@ -424,11 +560,11 @@ while True:
                 (gw, gh),
             )
             print(f"Recording 3D view to {GRAPH_OUTPUT_PATH} ({gw}x{gh})")
-        graph_writer.write(graph_bgr)
-    else:
+        async_writer.write(graph_writer, graph_bgr)
+    elif UPDATE_EVERY and not ARGS.no_show:
         fig3d.canvas.flush_events()
 
-    key = cv2.waitKey(1) & 0xFF
+    key = 255 if ARGS.no_show else cv2.waitKey(1) & 0xFF
     if key in (ord("q"), 27):
         stop_event.set()
         break
@@ -449,6 +585,10 @@ except Exception:
     pass
 executor.shutdown(wait=False)
 cap.release()
+async_writer.close()
+if len(frame_times) > 1:
+    print(f"Processing speed: {(len(frame_times) - 1) / (frame_times[-1] - frame_times[0]):.1f} frames/s "
+          f"over {len(frame_times)} frames")
 if RECORD:
     source_writer.release()
     twin_writer.release()
@@ -459,6 +599,18 @@ if graph_writer is not None:
 
 pd.DataFrame(log_rows).to_csv(LOG_PATH, index=False)
 print(f"Logged {len(log_rows)} rows to {LOG_PATH}")
+
+for a in engine.finish():
+    db.save_alert(a)
+for a in engine.alerts:
+    db.save_alert(a)
+db.close()
+alert_rows = [{**a, "tracks": "-".join(map(str, a["tracks"]))} for a in engine.alerts]
+pd.DataFrame(alert_rows).to_csv(ARGS.alerts, index=False)
+counts = pd.Series([f"{a['type']}/{a['severity']}" for a in engine.alerts]).value_counts()
+print(f"Raised {len(engine.alerts)} alerts -> {ARGS.alerts} and {ARGS.db}")
+for k, n in counts.items():
+    print(f"  {k:32s} {n}")
 
 cv2.destroyAllWindows()
 plt.close(fig3d)
