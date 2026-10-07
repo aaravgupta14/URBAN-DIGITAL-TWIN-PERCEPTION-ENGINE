@@ -167,6 +167,14 @@ pip install ultralytics opencv-python torch transformers pandas matplotlib numpy
 
 The `yolo11s.pt` weights download automatically on first use.
 
+**One command for a calibrated camera.** `run_camera_Generalized.py` does everything: it creates `cameras/<name>/`, reads the resolution and fps from the video, builds the homography from the camera details, runs the live twin with alerts and writes the offline reports to `analysis.txt`:
+
+```bash
+python run_camera_Generalized.py --name junction_north --video rtsp://192.168.1.20/stream1 --camera-height 6.0 --pitch 12 --focal 1100 --speed-limit 40 --fast --no-3d
+```
+
+Later runs reuse the saved calibration, so `--name` and `--video` are enough. The steps below do the same thing one file at a time.
+
 **1. Calibrate.** For a deployed camera with known specs, run this in the camera's working folder:
 
 ```bash
@@ -199,6 +207,7 @@ python digital_twin_log_Generalized.py --fast --plot3d-every 0
 | `--conf 0.25` | Faster detection, but weak boxes are dropped |
 | `--no-show` | No windows, for batch runs |
 | `--keep-db` | Add this run to the database instead of replacing it |
+| `--speed-limit 40` | Overspeed limit for this camera in km/h |
 
 Live window controls: `space` pauses, `n` steps one frame, `q` or `Esc` quits.
 
@@ -218,6 +227,7 @@ python eval_Generalized.py
 ## Repository Layout
 
 ```text
+run_camera_Generalized.py         one command for a calibrated camera: calibrate, run, analyse
 digital_twin_log_Generalized.py   tracker: detection, twin views, live alerts, CSV + database, videos
 alerts_Generalized.py             live alert engine: conflicts, overspeed, sudden acceleration
 twin_db_Generalized.py            SQLite storage for runs, detections, kinematics and alerts

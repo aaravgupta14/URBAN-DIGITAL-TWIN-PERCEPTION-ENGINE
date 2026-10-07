@@ -26,6 +26,7 @@ from scene_Generalized import (
     load_transforms, to_reference,
     UNITS_PER_METER, PAD_LEFT, PAD_RIGHT, PAD_TOP, PAD_BOTTOM,
 )
+import alerts_Generalized
 from alerts_Generalized import AlertEngine
 from twin_db_Generalized import TwinDB
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -53,6 +54,7 @@ parser.add_argument("--fast", action="store_true", help="BoT-SORT without camera
 parser.add_argument("--plot3d-every", type=int, default=2, help="draw the 3D view every N frames, 0 disables it")
 parser.add_argument("--no-show", action="store_true", help="no live windows (batch runs)")
 parser.add_argument("--conf", type=float, default=0.1, help="detector confidence; 0.25 is ~20%% faster but drops weak boxes")
+parser.add_argument("--speed-limit", type=float, default=None, help="overspeed limit in km/h for this camera")
 ARGS = parser.parse_args()
 
 _calib = load_calib()
@@ -326,10 +328,12 @@ log_rows = []
 frame_idx = ARGS.start
 frame_times = deque(maxlen=300)
 
+if ARGS.speed_limit is not None:
+    alerts_Generalized.SPEED_LIMIT_KMH = ARGS.speed_limit
 engine = AlertEngine(RECORD_FPS)
 db = TwinDB(ARGS.db, overwrite=not ARGS.keep_db)
 db.start_run(VIDEO_PATH, ARGS.start + 1, None if ARGS.end is None else ARGS.end + 1, RECORD_FPS, CALIB)
-print(f"Alerts: limit {__import__('alerts_Generalized').SPEED_LIMIT_KMH:.0f} km/h; "
+print(f"Alerts: limit {alerts_Generalized.SPEED_LIMIT_KMH:.0f} km/h; "
       f"writing {ARGS.alerts} and run {db.run_id} in {ARGS.db}")
 
 
