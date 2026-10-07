@@ -51,10 +51,12 @@ def estimate_horizon_and_height(df, img_w, img_h):
     return v_h, cam_h, -wi / ws, int(keep.sum())
 
 
-def model_matrix(cam_h, f, v_h, cx):
+def model_matrix(cam_h, f, v_h, cx, pitch_deg=0.0):
+    t = np.radians(pitch_deg)
+    cos_t, tan_t = np.cos(t), np.tan(t)
     return np.array([
-        [cam_h, 0.0, -cam_h * cx],
-        [0.0, 0.0, f * cam_h],
+        [cam_h / cos_t, 0.0, -cam_h * cx / cos_t],
+        [0.0, -cam_h * tan_t, f * cam_h / cos_t ** 2 + cam_h * tan_t * v_h],
         [0.0, 1.0, -v_h],
     ])
 
@@ -153,7 +155,7 @@ def main():
         if not HFOV_RANGE_DEG[0] <= hfov <= HFOV_RANGE_DEG[1]:
             print("WARNING: implied field of view is implausible; check the ruler clicks")
 
-    M = model_matrix(cam_h, f, v_h, cx)
+    M = model_matrix(cam_h, f, v_h, cx, args.pitch if from_specs else 0.0)
     for label, ps in (("fit", fit), ("check", check)):
         for p in ps:
             a, b = ground_xz(M, [p["p1"], p["p2"]])
