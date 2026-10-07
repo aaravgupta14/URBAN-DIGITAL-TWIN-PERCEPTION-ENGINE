@@ -94,28 +94,50 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--hfov", type=float, default=None, help="force horizontal field of view (deg)")
     parser.add_argument("--focal", type=float, default=None, help="force focal length in pixels (same camera elsewhere)")
+    parser.add_argument("--camera-height", type=float, default=None,
+                        help="known mounting height in metres; with --pitch and --focal/--hfov skips estimation")
+    parser.add_argument("--pitch", type=float, default=None, help="known downward tilt of the camera in degrees")
+    parser.add_argument("--image-size", type=int, nargs=2, default=None, metavar=("W", "H"))
     parser.add_argument("--max-depth", type=float, default=MAX_DEPTH_M)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
 
-    ref = cv2.imread(REF_PATH)
-    img_h, img_w = ref.shape[:2]
-    cx = img_w / 2.0
-    df = pd.read_csv(LOG_PATH)
+    if args.image_size:
+        img_w, img_h = args.image_size
+    else:
+        ref = cv2.imread(REF_PATH)
+        if ref is None:
+            raise SystemExit(f"{REF_PATH} not found; pass --image-size W H")
+        img_h, img_w = ref.shape[:2]
+    cx, cy = img_w / 2.0, img_h / 2.0
 
-    v_h, cam_h, v_h_width, n = estimate_horizon_and_height(df, img_w, img_h)
+    from_specs = args.camera_height is not None and args.pitch is not None
     print("=== Ground-plane camera model ===")
-    print(f"horizon row from box heights : {v_h:.1f}  ({n} boxes)")
-    print(f"horizon row from box widths  : {v_h_width:.1f}  (independent check)")
-    print(f"camera height                : {cam_h:.2f} m  (assumes car {CLASS_HEIGHT_M[2]} m, "
-          f"motorcycle+rider {CLASS_HEIGHT_M[3]} m)")
-    if not CAMERA_HEIGHT_RANGE_M[0] <= cam_h <= CAMERA_HEIGHT_RANGE_M[1]:
-        print("WARNING: camera height is outside the plausible handheld range")
+    if from_specs:
+        if args.focal is None and args.hfov is None:
+            raise SystemExit("with --camera-height and --pitch also give --focal or --hfov")
+        f_spec = args.focal or cx / np.tan(np.radians(args.hfov) / 2)
+        cam_h = args.camera_height
+        v_h = cy - f_spec * np.tan(np.radians(args.pitch))
+        print(f"from camera specs            : height {cam_h:.2f} m, tilt {args.pitch:.1f} deg, "
+              f"focal {f_spec:.0f} px -> horizon row {v_h:.1f}")
+    else:
+        df = pd.read_csv(LOG_PATH)
+        v_h, cam_h, v_h_width, n = estimate_horizon_and_height(df, img_w, img_h)
+        print(f"horizon row from box heights : {v_h:.1f}  ({n} boxes)")
+        print(f"horizon row from box widths  : {v_h_width:.1f}  (independent check)")
+        print(f"camera height                : {cam_h:.2f} m  (assumes car {CLASS_HEIGHT_M[2]} m, "
+              f"motorcycle+rider {CLASS_HEIGHT_M[3]} m)")
+        if not CAMERA_HEIGHT_RANGE_M[0] <= cam_h <= CAMERA_HEIGHT_RANGE_M[1]:
+            print("WARNING: camera height is outside the plausible handheld range")
 
     all_pairs = load_fit_pairs()
     fit = [p for p in all_pairs if p["kind"] == "fit"]
     check = [p for p in all_pairs if p["kind"] == "check"]
-    if args.focal is not None:
+    if from_specs:
+        f = f_spec
+        hfov = 2 * np.degrees(np.arctan(cx / f))
+    elif args.focal is not None:
         f = args.focal
         hfov = 2 * np.degrees(np.arctan(cx / f))
         print(f"focal length                 : {f:.0f} px fixed from another calibration (HFOV {hfov:.0f} deg)")

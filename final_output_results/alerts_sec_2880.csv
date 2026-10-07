@@ -1,0 +1,6 @@
+alert_id,type,severity,frame_start,frame_end,time_s,tracks,far_field,message,ttc_sec,gap_m
+1,conflict,warning,2755,2760,91.83,4-18,False,"tracks 4-18 TTC 1.6 s, gap 5.2 m",1.62,5.17
+2,conflict,warning,2768,2777,92.27,4-18,False,"tracks 4-18 TTC 1.8 s, gap 4.8 m",1.25,4.76
+3,conflict,critical,2777,2785,92.57,9-18,True,"tracks 9-18 TTC 0.0 s, gap 0.0 m",0.0,0.02
+4,conflict,warning,2805,2814,93.5,9-18,False,"tracks 9-18 TTC 1.4 s, gap 1.6 m",1.14,1.55
+5,conflict,warning,2908,2914,96.93,194-213,True,"tracks 194-213 TTC 2.7 s, gap 16.6 m",2.65,16.46

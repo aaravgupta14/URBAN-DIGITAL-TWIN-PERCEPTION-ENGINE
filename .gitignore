@@ -27,3 +27,4 @@ sections/*/*.mp4
 *.db-wal
 *.db-shm
 alerts.csv
+final_output_results/*.avi
