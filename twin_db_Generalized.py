@@ -38,7 +38,11 @@ KINEMATIC_COLS = ["frame_idx", "track_id", "x_m", "y_m", "vx", "vy", "ax", "ay",
 
 
 class TwinDB:
-    def __init__(self, path=DB_PATH):
+    def __init__(self, path=DB_PATH, overwrite=False):
+        if overwrite:
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(path + suffix):
+                    os.remove(path + suffix)
         self.conn = sqlite3.connect(path)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)

@@ -41,17 +41,32 @@ if device == "cuda":
     torch.backends.cudnn.allow_tf32 = True
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--video", default="dataset/Weast (1).mp4")
-parser.add_argument("--start", type=int, default=0, help="first frame to process (0-based)")
+parser.add_argument("--video", default=None, help="default: the video saved in calibration.json")
+parser.add_argument("--start", type=int, default=None, help="first frame to process (0-based)")
 parser.add_argument("--end", type=int, default=None, help="last frame to process (0-based)")
 parser.add_argument("--log", default="tracking_log.csv")
 parser.add_argument("--model", default="yolo11s.pt")
 parser.add_argument("--db", default="twin_state.db")
+parser.add_argument("--keep-db", action="store_true", help="add this run to the database instead of replacing it")
 parser.add_argument("--alerts", default="alerts.csv")
 parser.add_argument("--fast", action="store_true", help="BoT-SORT without camera-motion compensation (~30%% faster)")
 parser.add_argument("--plot3d-every", type=int, default=2, help="draw the 3D view every N frames, 0 disables it")
 parser.add_argument("--no-show", action="store_true", help="no live windows (batch runs)")
+parser.add_argument("--conf", type=float, default=0.1, help="detector confidence; 0.25 is ~20%% faster but drops weak boxes")
 ARGS = parser.parse_args()
+
+_calib = load_calib()
+if ARGS.video is None:
+    ARGS.video = _calib.get("video") or "dataset/Weast (1).mp4"
+if ARGS.start is None and ARGS.end is None and _calib.get("frame_range"):
+    ARGS.start, ARGS.end = _calib["frame_range"]
+if ARGS.start is None:
+    ARGS.start = 0
+if not os.path.exists(ARGS.model):
+    _bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), ARGS.model)
+    if os.path.exists(_bundled):
+        ARGS.model = _bundled
+print(f"Video: {ARGS.video}  frames {ARGS.start}-{'end' if ARGS.end is None else ARGS.end}")
 
 VIDEO_PATH = ARGS.video
 HOMOGRAPHY_PATH = H_PATH
@@ -263,11 +278,45 @@ def refine_ground_point(frame, x1, y1, x2, y2):
         refined_y = y2
     return (x1 + x2) // 2, refined_y
 
-executor = ThreadPoolExecutor(max_workers=1)
+result_queue: "Queue" = Queue(maxsize=FRAME_QUEUE_MAX)
+
+
+def detector():
+    while not stop_event.is_set():
+        try:
+            frame = frame_queue.get(timeout=0.5)
+        except Empty:
+            continue
+        if frame is None:
+            break
+        with torch.no_grad():
+            boxes = model.track(
+                frame,
+                persist=True,
+                tracker=TRACKER_CFG,
+                classes=[2, 3, 5, 7],
+                imgsz=1280,
+                conf=ARGS.conf,
+                device=TRACK_DEVICE,
+                half=USE_HALF,
+                verbose=False,
+            )[0].boxes.cpu()
+        while not stop_event.is_set():
+            try:
+                result_queue.put((frame, boxes), timeout=0.5)
+                break
+            except Full:
+                continue
+    result_queue.put(None)
+
+
+executor = ThreadPoolExecutor(max_workers=2)
 reader_future = executor.submit(video_reader)
+detector_future = executor.submit(detector)
 
 paused = False
-last_frame = None
+step_once = False
+last_item = None
 prev_positions = {}
 track_streak = {}
 step_history = {}
@@ -278,7 +327,7 @@ frame_idx = ARGS.start
 frame_times = deque(maxlen=300)
 
 engine = AlertEngine(RECORD_FPS)
-db = TwinDB(ARGS.db)
+db = TwinDB(ARGS.db, overwrite=not ARGS.keep_db)
 db.start_run(VIDEO_PATH, ARGS.start + 1, None if ARGS.end is None else ARGS.end + 1, RECORD_FPS, CALIB)
 print(f"Alerts: limit {__import__('alerts_Generalized').SPEED_LIMIT_KMH:.0f} km/h; "
       f"writing {ARGS.alerts} and run {db.run_id} in {ARGS.db}")
@@ -304,36 +353,24 @@ scat3d = ax3d.scatter([0.0], [0.0], [Z_PLANE], s=25, depthshade=False)
 
 graph_writer = None
 while True:
-    if not paused:
+    if not paused or step_once:
         try:
-            frame = frame_queue.get(timeout=1.0)
+            item = result_queue.get(timeout=1.0)
         except Empty:
             continue
-        if frame is None:
+        if item is None:
             break
-        last_frame = frame
+        last_item = item
         frame_idx += 1
         new_frame = True
+        step_once = False
     else:
-        frame = last_frame
-        if frame is None:
+        if last_item is None:
+            if cv2.waitKey(30) & 0xFF == ord(" "):
+                paused = False
             continue
         new_frame = False
-
-    with torch.no_grad():
-        results = model.track(
-            frame,
-            persist=True,
-            tracker=TRACKER_CFG,
-            classes=[2, 3, 5, 7],
-            imgsz=1280,
-            conf=0.1,
-            device=TRACK_DEVICE,
-            half=USE_HALF,
-            verbose=False,
-        )
-
-    boxes = results[0].boxes
+    frame, boxes = last_item
     annotated_frame = frame.copy()
     canvas = np.full((CANVAS_HEIGHT, CANVAS_WIDTH, 3), (40, 40, 40), dtype=np.uint8)
 
@@ -368,8 +405,9 @@ while True:
             ref_pts.astype(np.float32).reshape(-1, 1, 2), H
         ).reshape(-1, 2)
 
-        for tid in ids:
-            track_streak[int(tid)] = track_streak.get(int(tid), 0) + 1
+        if new_frame:
+            for tid in ids:
+                track_streak[int(tid)] = track_streak.get(int(tid), 0) + 1
 
         for idx, track_id in enumerate(ids):
             track_id = int(track_id)
@@ -391,7 +429,7 @@ while True:
             in_bounds = stab_ok and not truncated and world_in_bounds(X, Y, OUTPUT_WIDTH, OUTPUT_HEIGHT)
             stable = track_streak[track_id] >= MIN_TRACK_AGE
 
-            log_rows.append({
+            row = {
                 "source": VIDEO_LABEL,
                 "frame_idx": frame_idx,
                 "track_id": track_id,
@@ -410,10 +448,11 @@ while True:
                 "low_conf": bool(low_conf),
                 "in_bounds": bool(in_bounds),
                 "stable": bool(stable),
-            })
+            }
             frame_boxes[track_id] = (tx1, ty1, tx2, ty2)
             if new_frame:
-                db.add_detection(log_rows[-1])
+                log_rows.append(row)
+                db.add_detection(row)
 
             if in_bounds and stable:
                 prev_smooth = smoothed_positions.get(track_id, (X, Y))
@@ -571,16 +610,12 @@ while True:
     elif key == ord(" "):
         paused = not paused
     elif key == ord("n") and paused:
-        try:
-            frame = frame_queue.get(timeout=1.0)
-            if frame is not None:
-                last_frame = frame
-        except Empty:
-            pass
+        step_once = True
 
 stop_event.set()
 try:
     reader_future.result(timeout=3.0)
+    detector_future.result(timeout=10.0)
 except Exception:
     pass
 executor.shutdown(wait=False)

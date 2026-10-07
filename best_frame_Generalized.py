@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import cv2
 import numpy as np
@@ -66,7 +67,8 @@ print("----------------------------------")
 cv2.imwrite("calibration_frame.jpg", best_frame)
 
 calib = load_calib()
-calib.update({"video": video_path, "ref_frame": best_frame_number})
+calib.update({"video": os.path.abspath(video_path), "ref_frame": best_frame_number,
+              "frame_range": [args.start, args.end]})
 save_calib(calib)
 
 if args.no_show:
