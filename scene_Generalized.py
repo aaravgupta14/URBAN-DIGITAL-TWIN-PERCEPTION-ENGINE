@@ -65,7 +65,7 @@ def load_transforms(path=STAB_PATH):
     ref_frame = load_calib().get("ref_frame")
     if "ref_frame" in data and ref_frame is not None and int(data["ref_frame"]) != int(ref_frame):
         print(f"{path} was built for calibration frame {int(data['ref_frame'])}, "
-              f"current is {ref_frame}; rerun stabilize_video_calb.py")
+              f"current is {ref_frame}; ignoring it")
         return None
     return data["T"]
 

@@ -55,7 +55,7 @@ def speed_report(per_track, cls):
     for name, vals in sorted(by_class.items()):
         print(f"  {name:11s} n={len(vals):3d}  median {statistics.median(vals):5.1f} km/h")
     if p50 > hi or p50 < lo:
-        print("Median is outside the urban range: suspect the scale (depth_calib_Generalized.py) or fps (fps_check_video_calb.py).")
+        print("Median is outside the urban range: suspect the calibration (ground_model_Generalized.py) or the fps in calibration.json.")
     print()
     return medians
 

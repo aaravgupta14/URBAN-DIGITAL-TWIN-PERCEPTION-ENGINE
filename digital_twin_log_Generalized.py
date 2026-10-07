@@ -125,7 +125,7 @@ BANNER_MAX = 4
 H = np.load(HOMOGRAPHY_PATH)
 STAB_T = load_transforms()
 print("Stabilization: " + ("loaded, ground points mapped to the calibration frame" if STAB_T is not None
-                           else "not found, assuming a static camera (run stabilize_video_calb.py)"))
+                           else "not found, assuming a static camera"))
 H_inv = np.linalg.inv(H)
 print(f"Twin world: {OUTPUT_WIDTH / UNITS_PER_METER:.1f} m x {OUTPUT_HEIGHT / UNITS_PER_METER:.1f} m "
       f"(sx={CALIB['sx']:.3f}, sy={CALIB['sy']:.3f}), view scale {VIEW_SCALE:.3f}")
