@@ -65,7 +65,7 @@ if ARGS.start is None and ARGS.end is None and _calib.get("frame_range"):
 if ARGS.start is None:
     ARGS.start = 0
 if not os.path.exists(ARGS.model):
-    _bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), ARGS.model)
+    _bundled = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ARGS.model)
     if os.path.exists(_bundled):
         ARGS.model = _bundled
 print(f"Video: {ARGS.video}  frames {ARGS.start}-{'end' if ARGS.end is None else ARGS.end}")

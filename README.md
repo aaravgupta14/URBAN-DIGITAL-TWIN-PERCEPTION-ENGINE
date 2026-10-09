@@ -154,7 +154,7 @@ runs (1) ──┬──< detections   one row per vehicle per frame (raw tracki
 Indexes on `(run_id, frame_idx)` and `(run_id, track_id)` keep per-frame and per-vehicle queries fast. The database uses WAL mode so it can be read while the tracker writes, and rows are written in batches (about 1-2 ms per frame).
 
 ```bash
-python twin_db_Generalized.py --summary
+python src/twin_db_Generalized.py --summary
 ```
 
 ---
@@ -162,7 +162,7 @@ python twin_db_Generalized.py --summary
 ## Getting Started
 
 ```bash
-pip install ultralytics opencv-python torch transformers pandas matplotlib numpy pyyaml
+pip install -r requirements.txt
 ```
 
 The `yolo11s.pt` weights download automatically on first use.
@@ -170,25 +170,25 @@ The `yolo11s.pt` weights download automatically on first use.
 **One command for a calibrated camera.** `run_camera_Generalized.py` does everything: it creates `cameras/<name>/`, reads the resolution and fps from the video, builds the homography from the camera details, runs the live twin with alerts and writes the offline reports to `analysis.txt`:
 
 ```bash
-python run_camera_Generalized.py --name junction_north --video rtsp://192.168.1.20/stream1 --camera-height 6.0 --pitch 12 --focal 1100 --speed-limit 40 --fast --no-3d
+python src/run_camera_Generalized.py --name junction_north --video rtsp://192.168.1.20/stream1 --camera-height 6.0 --pitch 12 --focal 1100 --speed-limit 40 --fast --no-3d
 ```
 
-Later runs reuse the saved calibration, so `--name` and `--video` are enough. The steps below do the same thing one file at a time.
+Later runs reuse the saved calibration, so `--name` and `--video` are enough. The steps below do the same thing one file at a time. Run them from the repository root: each script reads and writes `calibration.json`, `homography.npy` and `tracking_log.csv` in the folder you run it from.
 
-**1. Calibrate.** For a deployed camera with known specs, run this in the camera's working folder:
+**1. Calibrate.** For a deployed camera with known specs:
 
 ```bash
-python ground_model_Generalized.py --camera-height 6.0 --pitch 12 --focal 1100 --image-size 1920 1080 --write
+python src/ground_model_Generalized.py --camera-height 6.0 --pitch 12 --focal 1100 --image-size 1920 1080 --write
 ```
 
 Without specs, calibrate from the footage:
 
 ```bash
-python best_frame_Generalized.py --video path/to/clip.mp4 --start 0 --end 600 --no-show
-python homo_IPM_Generalized.py --no-show
-python digital_twin_log_Generalized.py --no-show
-python depth_calib_Generalized.py
-python ground_model_Generalized.py --write
+python src/best_frame_Generalized.py --video path/to/clip.mp4 --start 0 --end 600 --no-show
+python src/homo_IPM_Generalized.py --no-show
+python src/digital_twin_log_Generalized.py --no-show
+python src/depth_calib_Generalized.py
+python src/ground_model_Generalized.py --write
 ```
 
 Steps 3 to 5 are: a first tracking pass for vehicle sizes, clicking one known length such as a car's wheelbase, then fitting the camera model.
@@ -196,8 +196,8 @@ Steps 3 to 5 are: a first tracking pass for vehicle sizes, clicking one known le
 **2. Run the twin with live alerts.** The tracker reads the video and frame range from `calibration.json`:
 
 ```bash
-python digital_twin_log_Generalized.py
-python digital_twin_log_Generalized.py --fast --plot3d-every 0
+python src/digital_twin_log_Generalized.py
+python src/digital_twin_log_Generalized.py --fast --plot3d-every 0
 ```
 
 | Option | Effect |
@@ -216,10 +216,10 @@ Alert thresholds such as the speed limit are constants at the top of `alerts_Gen
 **3. Analyse offline.** These read `tracking_log.csv` and need no GPU:
 
 ```bash
-python sanity_checks_Generalized.py
-python eda_Generalized.py
-python ttc_Generalized.py
-python eval_Generalized.py
+python src/sanity_checks_Generalized.py
+python src/eda_Generalized.py
+python src/ttc_Generalized.py
+python src/eval_Generalized.py
 ```
 
 ---
@@ -227,25 +227,38 @@ python eval_Generalized.py
 ## Repository Layout
 
 ```text
-run_camera_Generalized.py         one command for a calibrated camera: calibrate, run, analyse
-digital_twin_log_Generalized.py   tracker: detection, twin views, live alerts, CSV + database, videos
-alerts_Generalized.py             live alert engine: conflicts, overspeed, sudden acceleration
-twin_db_Generalized.py            SQLite storage for runs, detections, kinematics and alerts
-ground_model_Generalized.py       ground-plane camera model from vehicle sizes or camera specs
-best_frame_Generalized.py         pick the calibration frame and record the frame range
-road_seg_Generalized.py           SegFormer road mask
-homo_IPM_Generalized.py           road-edge homography (road mask for stabilization)
-depth_calib_Generalized.py        click known lengths; log reprojection helper
-scene_Generalized.py              shared calibration, stabilization transforms and canvas bounds
-kalman_Generalized.py             constant-acceleration Kalman filter with backward smoothing
-motion_Generalized.py             per-track kinematics, split at impossible jumps
-log_loader_Generalized.py         typed CSV loader
-plausibility_Generalized.py       physical plausibility thresholds
-ttc_Generalized.py                gated, persistent TTC / MTTC / DRAC conflicts
-eda_Generalized.py                lanes, speed, headway, fundamental diagram
-eval_Generalized.py               coverage, track length, per-class evaluation
-sanity_checks_Generalized.py      urban speed range and acceleration plausibility
-final_output_results/             final demo GIFs and alert list
+README.md
+requirements.txt
+src/
+  # Entry points
+  run_camera_Generalized.py         one command for a calibrated camera: calibrate, run, analyse
+  digital_twin_log_Generalized.py   tracker: detection, twin views, live alerts, CSV + database, videos
+
+  # Calibration
+  best_frame_Generalized.py         pick the calibration frame and record the frame range
+  road_seg_Generalized.py           SegFormer road mask
+  homo_IPM_Generalized.py           road-edge homography (road mask for stabilization)
+  ground_model_Generalized.py       ground-plane camera model from vehicle sizes or camera specs
+  depth_calib_Generalized.py        click known lengths; log reprojection helper
+  scene_Generalized.py              shared calibration, stabilization transforms and canvas bounds
+
+  # Motion and live alerts
+  kalman_Generalized.py             constant-acceleration Kalman filter with backward smoothing
+  motion_Generalized.py             per-track kinematics, split at impossible jumps
+  plausibility_Generalized.py       physical plausibility thresholds
+  alerts_Generalized.py             live alert engine: conflicts, overspeed, sudden acceleration
+
+  # Storage
+  twin_db_Generalized.py            SQLite storage for runs, detections, kinematics and alerts
+  log_loader_Generalized.py         typed CSV loader
+
+  # Offline analysis
+  ttc_Generalized.py                gated, persistent TTC / MTTC / DRAC conflicts
+  eda_Generalized.py                lanes, speed, headway, fundamental diagram
+  eval_Generalized.py               coverage, track length, per-class evaluation
+  sanity_checks_Generalized.py      urban speed range and acceleration plausibility
+final_output_results/               final demo GIFs and alert list
+cameras/<name>/                     per-camera calibration and results (created by run_camera, not tracked)
 ```
 
 ---

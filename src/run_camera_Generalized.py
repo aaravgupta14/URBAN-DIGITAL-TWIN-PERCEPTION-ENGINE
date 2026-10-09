@@ -6,13 +6,14 @@ import sys
 
 import cv2
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SRC_DIR)
 CAMERAS_DIR = os.path.join(ROOT, "cameras")
 ANALYSES = ["sanity_checks_Generalized.py", "eda_Generalized.py", "ttc_Generalized.py", "eval_Generalized.py"]
 
 
 def script(name):
-    return os.path.join(ROOT, name)
+    return os.path.join(SRC_DIR, name)
 
 
 def probe_video(source):
