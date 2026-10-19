@@ -1,0 +1,16 @@
+{
+  "fps": 30.0,
+  "raw_width": 2400,
+  "raw_height": 2682,
+  "sx": 1.0,
+  "sy": 1.0,
+  "method": "ground_model",
+  "horizon_row": 306.2,
+  "camera_height_m": 6.0,
+  "focal_px": 1100.0,
+  "hfov_deg": 82.2,
+  "depth_range_m": [
+    7.65,
+    30.0
+  ]
+}
