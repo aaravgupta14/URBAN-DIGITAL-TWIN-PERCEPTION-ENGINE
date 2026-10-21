@@ -10,7 +10,7 @@ It calibrates itself from the traffic: the horizon comes from how vehicle sizes 
 
 ## Final Output
 
-Ten seconds of the `weast` approach (frames 2730-3030), processed live by `digital_twin_log_Generalized.py`. Full-quality videos and the alert list are in [`final_output_results/`](final_output_results).
+Ten seconds of the `weast` approach (frames 2730-3030), processed live by `digital_twin_log_Generalized.py`. Full-quality videos and the alert list are in [`final_output_results/`](final_output_results). The source video is described under [Dataset](#dataset).
 
 **Tracking with live alerts.** Each vehicle has a persistent ID and a live speed. Vehicles in an alert get a coloured box and label: red for critical, orange for warning, magenta for sudden acceleration. The banner at the top right lists active alerts, such as `CONFLICT tracks 9-18 TTC 0.0 s`.
 
@@ -23,6 +23,21 @@ Ten seconds of the `weast` approach (frames 2730-3030), processed live by `digit
 **Digital twin, 3D view.** The same scene on the ground plane, coloured by vehicle class.
 
 ![Digital twin 3D](final_output_results/digital_twin_3d.gif)
+
+---
+
+## Dataset
+
+All results use one public video: `Talaimari/Weast.mp4` from the [Traffic Video Dataset](https://www.kaggle.com/datasets/arshadrahmanziban/traffic-video-dataset) by Arshad Rahman Ziban on Kaggle (version 1, January 2025), released under the GNU Free Documentation License 1.3.
+
+| Property | Value |
+| --- | --- |
+| Length | 170 s, 5,102 frames at 30 fps |
+| Resolution | 1280 x 720 |
+| Camera | Moving, apparently handheld |
+| Location | An urban road in the Bengal region, going by the Bengali signage. The dataset does not specify the exact location, date or recording device. |
+
+The video is not included in this repository. Download `Talaimari/Weast.mp4` from Kaggle and save it as `dataset/Weast (1).mp4`, the default path the scripts read. The frames in the GIFs above are adapted from this video.
 
 ---
 
